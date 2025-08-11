@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Download, Youtube, AlertCircle, Loader2, Film, Music, FileVideo, FileAudio, Play, Moon, Sun, Eye, ThumbsUp, Clock, Calendar, User, RefreshCw } from 'lucide-react'
+import { Download, AlertCircle, Loader2, Film, Music, FileVideo, FileAudio, Play, Moon, Sun, Eye, ThumbsUp, Clock, Calendar, User, RefreshCw } from 'lucide-react'
 
 interface Format {
   format_id: string
@@ -39,6 +39,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('video')
   const [activeVideoFormat, setActiveVideoFormat] = useState('mp4')
   const [activeAudioFormat, setActiveAudioFormat] = useState('m4a')
+  const [activeResolution, setActiveResolution] = useState('')
   const [downloadingFormats, setDownloadingFormats] = useState<Set<string>>(new Set())
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [formatsTimestamp, setFormatsTimestamp] = useState<number | null>(null)
@@ -82,6 +83,7 @@ export default function Home() {
     setVideoInfo(null)
     setIsExpired(false)
     setFormatsTimestamp(null)
+    setActiveResolution('')
 
     try {
       const response = await fetch('/api/formats', {
@@ -259,9 +261,14 @@ export default function Home() {
     return acc
   }, {} as Record<string, Format[]>)
 
-  // Get available video formats
+  // Get available video formats and resolutions
   const availableVideoFormats = Object.keys(groupedVideoFormats).sort()
   const availableAudioFormats = Object.keys(groupedAudioFormats).sort()
+  
+  // Get available resolutions for current video format
+  const availableResolutions = activeVideoFormat && groupedVideoFormats[activeVideoFormat] 
+    ? Object.keys(groupedVideoFormats[activeVideoFormat])
+    : []
 
   // Sort resolutions by quality (descending)
   const sortResolutions = (resolutions: string[]) => {
@@ -280,6 +287,14 @@ export default function Home() {
       return getResolutionValue(b) - getResolutionValue(a)
     })
   }
+
+  // Auto-set first resolution when format changes
+  useEffect(() => {
+    if (availableResolutions.length > 0 && !activeResolution) {
+      const sortedResolutions = sortResolutions(availableResolutions)
+      setActiveResolution(sortedResolutions[0])
+    }
+  }, [activeVideoFormat, availableResolutions, activeResolution])
 
   const getFormatIcon = (ext: string) => {
     const extension = ext.toLowerCase()
@@ -345,7 +360,7 @@ export default function Home() {
     
     return (
       <div 
-        className="border-2 rounded-2xl p-8 text-center transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(44,62,80,0.12)] shadow-[0_4px_20px_rgba(44,62,80,0.08)]"
+        className="border-2 rounded-xl p-6 text-center transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(44,62,80,0.12)] shadow-[0_4px_20px_rgba(44,62,80,0.08)]"
         style={{
           backgroundColor: colors.cardBg,
           borderColor: colors.cardBorder,
@@ -359,68 +374,47 @@ export default function Home() {
           e.currentTarget.style.backgroundColor = colors.cardBg
         }}
       >
-        {/* Format Type and ID */}
-        <div className="flex items-center justify-center gap-3 mb-6">
-          <div className="flex items-center gap-2">
-            {getFormatIcon(format.ext)}
-            <span className="font-bold text-lg" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>
-              {format.ext?.toUpperCase()}
-            </span>
-          </div>
-          <span 
-            className="text-xs px-3 py-1 rounded-full font-mono font-medium"
-            style={{ 
-              backgroundColor: isDarkMode ? '#374151' : '#e2e8f0',
-              color: colors.textMuted 
-            }}
-          >
-            {format.format_id}
+        {/* Format Type */}
+        <div className="flex items-center justify-center gap-2 mb-4">
+          {getFormatIcon(format.ext)}
+          <span className="font-bold text-lg" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>
+            {format.ext?.toUpperCase()}
           </span>
         </div>
 
         {/* Quality Badge */}
         {format.resolution && format.resolution !== 'audio only' && (
-          <div className="mb-6">
-            <span className="inline-block bg-[#334155] text-white px-4 py-2 rounded-2xl text-sm font-semibold" style={{ fontFamily: 'Poppins, sans-serif' }}>
+          <div className="mb-4">
+            <span className="inline-block bg-[#334155] text-white px-3 py-1 rounded-xl text-sm font-semibold" style={{ fontFamily: 'Poppins, sans-serif' }}>
               {format.resolution}
             </span>
           </div>
         )}
 
-        {/* Details */}
-        <div className="space-y-3 mb-8" style={{ color: colors.textSecondary, fontFamily: 'Inter, sans-serif' }}>
-          {/* Always show file size since we're filtering by it */}
-          <div className="flex justify-between items-center">
-            <span className="text-sm font-medium">Size:</span>
-            <span className="font-semibold" style={{ color: colors.text }}>{formatFileSize(format.filesize)}</span>
+        {/* Details - Compact Layout */}
+        <div className="space-y-2 mb-6" style={{ color: colors.textSecondary, fontFamily: 'Inter, sans-serif' }}>
+          {/* File Size - Most Important */}
+          <div className="text-center">
+            <div className="text-xs text-[#64748b] mb-1">Size</div>
+            <div className="font-bold text-lg" style={{ color: colors.text }}>{formatFileSize(format.filesize)}</div>
           </div>
           
-          {format.fps && (
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium">FPS:</span>
-              <span className="font-semibold" style={{ color: colors.text }}>{format.fps}</span>
-            </div>
-          )}
-
-          {format.vcodec && format.vcodec !== 'none' && (
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium">Video:</span>
-              <span className="font-semibold text-xs" style={{ color: colors.text }}>{format.vcodec}</span>
-            </div>
-          )}
-
-          {format.acodec && format.acodec !== 'none' && (
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium">Audio:</span>
-              <span className="font-semibold text-xs" style={{ color: colors.text }}>{format.acodec}</span>
-            </div>
-          )}
-
-          {format.format_note && (
-            <div className="text-xs mt-4 opacity-80 font-medium" style={{ color: colors.textMuted }}>
-              {format.format_note}
-            </div>
-          )}
+          {/* Secondary Info in Row */}
+          <div className="flex justify-between text-xs">
+            {format.fps && (
+              <div className="text-center">
+                <div className="text-[#64748b]">FPS</div>
+                <div className="font-semibold" style={{ color: colors.text }}>{format.fps}</div>
+              </div>
+            )}
+            
+            {format.vcodec && format.vcodec !== 'none' && (
+              <div className="text-center">
+                <div className="text-[#64748b]">Codec</div>
+                <div className="font-semibold text-xs" style={{ color: colors.text }}>{format.vcodec.split('.')[0]}</div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Download Button */}
@@ -428,7 +422,7 @@ export default function Home() {
           onClick={() => handleDownload(format.format_id, format.resolution || '', format.ext)}
           disabled={isDownloading || isExpired}
           className={`
-            w-full py-4 px-6 rounded-2xl font-bold text-lg tracking-wide transition-all duration-300 relative overflow-hidden
+            w-full py-3 px-4 rounded-xl font-bold text-sm tracking-wide transition-all duration-300 relative overflow-hidden
             ${isDownloading || isExpired
               ? 'cursor-not-allowed' 
               : 'hover:-translate-y-1 hover:shadow-[0_15px_35px_rgba(51,65,85,0.35)] shadow-[0_8px_25px_rgba(51,65,85,0.25)]'
@@ -455,12 +449,12 @@ export default function Home() {
               'EXPIRED'
             ) : isDownloading ? (
               <>
-                <Loader2 className="w-5 h-5 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
                 DOWNLOADING...
               </>
             ) : (
               <>
-                <Download className="w-5 h-5" />
+                <Download className="w-4 h-4" />
                 DOWNLOAD
               </>
             )}
@@ -509,7 +503,11 @@ export default function Home() {
           {/* Header */}
           <div className="text-center mb-20 opacity-0 animate-[fadeInUp_1s_ease_0.2s_forwards]">
             <div className="flex items-center justify-center gap-4 mb-8">
-              <Youtube className="w-12 h-12 text-red-600 opacity-0 animate-[fadeInUp_1s_ease_0.1s_forwards] hover:-translate-y-0.5 hover:scale-105 transition-all duration-300 filter drop-shadow-[0_4px_20px_rgba(44,62,80,0.15)]" />
+              <img 
+                src="/logo.png" 
+                alt="DebuTube Logo" 
+                className="w-16 h-16 opacity-0 animate-[fadeInUp_1s_ease_0.1s_forwards] hover:-translate-y-0.5 hover:scale-105 transition-all duration-300 filter drop-shadow-[0_4px_20px_rgba(44,62,80,0.15)]"
+              />
             </div>
             <h1 className="text-6xl font-black mb-5 tracking-tight relative" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
               DEBU TUBE
@@ -731,8 +729,8 @@ export default function Home() {
           {/* Formats Section */}
           {formats.length > 0 && !isExpired && (
             <div className="mb-12 opacity-0 animate-[fadeInUp_0.5s_ease_forwards]">
-              {/* Tab Navigation */}
-              <div className="flex justify-center mb-12 gap-4">
+              {/* Main Tab Navigation (Video/Audio) */}
+              <div className="flex justify-center mb-8 gap-4">
                 <button
                   onClick={() => setActiveTab('video')}
                   className={`
@@ -807,129 +805,169 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Format Type Selectors */}
+              {/* Video Tab Content */}
               {activeTab === 'video' && availableVideoFormats.length > 0 && (
-                <div className="mb-12">
-                  <h3 className="text-2xl font-bold mb-6 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Format Type:</h3>
-                  <div className="flex justify-center gap-4 flex-wrap">
-                    {availableVideoFormats.map(format => (
-                      <button
-                        key={format}
-                        onClick={() => setActiveVideoFormat(format)}
-                        className={`
-                          flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all duration-300 border
-                          ${activeVideoFormat === format
-                            ? 'bg-[#334155] text-white shadow-lg'
-                            : ''
-                          }
-                        `}
-                        style={{
-                          fontFamily: 'Poppins, sans-serif',
-                          ...(activeVideoFormat !== format && {
-                            backgroundColor: colors.cardBg,
-                            color: colors.text,
-                            borderColor: colors.cardBorder
-                          })
-                        }}
-                        onMouseEnter={(e) => {
-                          if (activeVideoFormat !== format) {
-                            e.currentTarget.style.borderColor = colors.cardBorderHover
-                            e.currentTarget.style.backgroundColor = colors.cardHoverBg
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (activeVideoFormat !== format) {
-                            e.currentTarget.style.borderColor = colors.cardBorder
-                            e.currentTarget.style.backgroundColor = colors.cardBg
-                          }
-                        }}
-                      >
-                        {getFormatIcon(format)}
-                        {format.toUpperCase()}
-                        <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm font-bold">
-                          {Object.keys(groupedVideoFormats[format]).length}
-                        </span>
-                      </button>
-                    ))}
+                <div>
+                  {/* Format Type Selector */}
+                  <div className="mb-8">
+                    <h3 className="text-xl font-bold mb-4 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Format:</h3>
+                    <div className="flex justify-center gap-3 flex-wrap">
+                      {availableVideoFormats.map(format => (
+                        <button
+                          key={format}
+                          onClick={() => setActiveVideoFormat(format)}
+                          className={`
+                            flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all duration-300 border text-sm
+                            ${activeVideoFormat === format
+                              ? 'bg-[#334155] text-white shadow-lg'
+                              : ''
+                            }
+                          `}
+                          style={{
+                            fontFamily: 'Poppins, sans-serif',
+                            ...(activeVideoFormat !== format && {
+                              backgroundColor: colors.cardBg,
+                              color: colors.text,
+                              borderColor: colors.cardBorder
+                            })
+                          }}
+                          onMouseEnter={(e) => {
+                            if (activeVideoFormat !== format) {
+                              e.currentTarget.style.borderColor = colors.cardBorderHover
+                              e.currentTarget.style.backgroundColor = colors.cardHoverBg
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (activeVideoFormat !== format) {
+                              e.currentTarget.style.borderColor = colors.cardBorder
+                              e.currentTarget.style.backgroundColor = colors.cardBg
+                            }
+                          }}
+                        >
+                          {getFormatIcon(format)}
+                          {format.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
 
-              {activeTab === 'audio' && availableAudioFormats.length > 0 && (
-                <div className="mb-12">
-                  <h3 className="text-2xl font-bold mb-6 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Audio Format:</h3>
-                  <div className="flex justify-center gap-4 flex-wrap">
-                    {availableAudioFormats.map(format => (
-                      <button
-                        key={format}
-                        onClick={() => setActiveAudioFormat(format)}
-                        className={`
-                          flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all duration-300 border
-                          ${activeAudioFormat === format
-                            ? 'bg-[#059669] text-white shadow-lg'
-                            : ''
-                          }
-                        `}
-                        style={{
-                          fontFamily: 'Poppins, sans-serif',
-                          ...(activeAudioFormat !== format && {
-                            backgroundColor: colors.cardBg,
-                            color: colors.text,
-                            borderColor: colors.cardBorder
-                          })
-                        }}
-                        onMouseEnter={(e) => {
-                          if (activeAudioFormat !== format) {
-                            e.currentTarget.style.borderColor = colors.cardBorderHover
-                            e.currentTarget.style.backgroundColor = colors.cardHoverBg
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (activeAudioFormat !== format) {
-                            e.currentTarget.style.borderColor = colors.cardBorder
-                            e.currentTarget.style.backgroundColor = colors.cardBg
-                          }
-                        }}
-                      >
-                        {getFormatIcon(format)}
-                        {format.toUpperCase()}
-                        <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm font-bold">
-                          {groupedAudioFormats[format].length}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  {/* Resolution Tabs */}
+                  {availableResolutions.length > 0 && (
+                    <div className="mb-8">
+                      <h3 className="text-xl font-bold mb-4 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Resolution:</h3>
+                      <div className="flex justify-center gap-3 flex-wrap">
+                        {sortResolutions(availableResolutions).map(resolution => (
+                          <button
+                            key={resolution}
+                            onClick={() => setActiveResolution(resolution)}
+                            className={`
+                              px-4 py-2 rounded-lg font-bold transition-all duration-300 border text-sm
+                              ${activeResolution === resolution
+                                ? 'bg-[#2563eb] text-white shadow-lg'
+                                : ''
+                              }
+                            `}
+                            style={{
+                              fontFamily: 'Poppins, sans-serif',
+                              ...(activeResolution !== resolution && {
+                                backgroundColor: colors.cardBg,
+                                color: colors.text,
+                                borderColor: colors.cardBorder
+                              })
+                            }}
+                            onMouseEnter={(e) => {
+                              if (activeResolution !== resolution) {
+                                e.currentTarget.style.borderColor = colors.cardBorderHover
+                                e.currentTarget.style.backgroundColor = colors.cardHoverBg
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (activeResolution !== resolution) {
+                                e.currentTarget.style.borderColor = colors.cardBorder
+                                e.currentTarget.style.backgroundColor = colors.cardBg
+                              }
+                            }}
+                          >
+                            {resolution}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {/* Content */}
-              {activeTab === 'video' && activeVideoFormat && groupedVideoFormats[activeVideoFormat] && (
-                <div className="space-y-16">
-                  {sortResolutions(Object.keys(groupedVideoFormats[activeVideoFormat])).map(resolution => (
-                    <div key={resolution}>
-                      <h4 className="text-3xl font-black mb-8 text-center" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
-                        {resolution} - {activeVideoFormat.toUpperCase()}
+                  {/* Format Cards for Selected Resolution */}
+                  {activeVideoFormat && activeResolution && groupedVideoFormats[activeVideoFormat]?.[activeResolution] && (
+                    <div>
+                      <h4 className="text-2xl font-black mb-6 text-center" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
+                        {activeResolution} {activeVideoFormat.toUpperCase()} Downloads
                       </h4>
-                      <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
-                        {groupedVideoFormats[activeVideoFormat][resolution].map(format => (
+                      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                        {groupedVideoFormats[activeVideoFormat][activeResolution].map(format => (
                           <FormatCard key={format.format_id} format={format} />
                         ))}
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
 
-              {activeTab === 'audio' && activeAudioFormat && groupedAudioFormats[activeAudioFormat] && (
+              {/* Audio Tab Content */}
+              {activeTab === 'audio' && availableAudioFormats.length > 0 && (
                 <div>
-                  <h4 className="text-3xl font-black mb-8 text-center" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
-                    {activeAudioFormat.toUpperCase()} AUDIO FILES
-                  </h4>
-                  <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
-                    {groupedAudioFormats[activeAudioFormat].map(format => (
-                      <FormatCard key={format.format_id} format={format} />
-                    ))}
+                  <div className="mb-8">
+                    <h3 className="text-xl font-bold mb-4 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Audio Format:</h3>
+                    <div className="flex justify-center gap-3 flex-wrap">
+                      {availableAudioFormats.map(format => (
+                        <button
+                          key={format}
+                          onClick={() => setActiveAudioFormat(format)}
+                          className={`
+                            flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all duration-300 border text-sm
+                            ${activeAudioFormat === format
+                              ? 'bg-[#059669] text-white shadow-lg'
+                              : ''
+                            }
+                          `}
+                          style={{
+                            fontFamily: 'Poppins, sans-serif',
+                            ...(activeAudioFormat !== format && {
+                              backgroundColor: colors.cardBg,
+                              color: colors.text,
+                              borderColor: colors.cardBorder
+                            })
+                          }}
+                          onMouseEnter={(e) => {
+                            if (activeAudioFormat !== format) {
+                              e.currentTarget.style.borderColor = colors.cardBorderHover
+                              e.currentTarget.style.backgroundColor = colors.cardHoverBg
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (activeAudioFormat !== format) {
+                              e.currentTarget.style.borderColor = colors.cardBorder
+                              e.currentTarget.style.backgroundColor = colors.cardBg
+                            }
+                          }}
+                        >
+                          {getFormatIcon(format)}
+                          {format.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {activeAudioFormat && groupedAudioFormats[activeAudioFormat] && (
+                    <div>
+                      <h4 className="text-2xl font-black mb-6 text-center" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
+                        {activeAudioFormat.toUpperCase()} Audio Downloads
+                      </h4>
+                      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                        {groupedAudioFormats[activeAudioFormat].map(format => (
+                          <FormatCard key={format.format_id} format={format} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
