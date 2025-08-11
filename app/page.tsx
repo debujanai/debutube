@@ -103,6 +103,19 @@ export default function Home() {
       setVideoInfo(data.videoInfo)
       setFormats(data.formats)
       setFormatsTimestamp(Date.now())
+
+      // Auto-scroll to video information section after data loads
+      setTimeout(() => {
+        const videoInfoElement = document.getElementById('video-info-section')
+        if (videoInfoElement) {
+          videoInfoElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'start',
+            inline: 'nearest'
+          })
+        }
+      }, 500) // Small delay to ensure content is rendered
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
@@ -666,6 +679,7 @@ export default function Home() {
           {/* Video Information Section */}
           {videoInfo && !isExpired && (
             <div 
+              id="video-info-section"
               className="mb-16 opacity-0 animate-[fadeInUp_0.5s_ease_forwards] rounded-3xl overflow-hidden shadow-[0_8px_32px_rgba(44,62,80,0.15)]"
               style={{
                 backgroundColor: colors.cardBg,
