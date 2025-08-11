@@ -1,10 +1,9 @@
 {
   "functions": {
     "app/api/*/route.ts": {
-      "runtime": "nodejs18.x"
+      "runtime": "nodejs20.x"
     }
   },
   "buildCommand": "npm run build",
-  "installCommand": "npm install && pip install yt-dlp",
-  "framework": "nextjs"
+  "installCommand": "npm install && pip install yt-dlp"
 } 
