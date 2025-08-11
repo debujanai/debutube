@@ -1,0 +1,18 @@
+{
+  "functions": {
+    "app/api/*/route.ts": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    },
+    {
+      "src": "requirements.txt",
+      "use": "@vercel/python"
+    }
+  ],
+  "installCommand": "npm install && pip install yt-dlp"
+} 
