@@ -6,22 +6,18 @@
       "use": "@vercel/next"
     },
     {
-      "src": "api/formats.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/direct-url.py", 
+      "src": "api/app.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/api/formats",
-      "dest": "/api/formats.py"
+      "src": "/api/(.*)",
+      "dest": "/api/app.py"
     },
     {
-      "src": "/api/direct-url",
-      "dest": "/api/direct-url.py"
+      "src": "/health",
+      "dest": "/api/app.py"
     },
     {
       "src": "/(.*)",
