@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Download, Youtube, AlertCircle, Loader2, Film, Music, FileVideo, FileAudio, Play, Moon, Sun, Eye, ThumbsUp, Clock, Calendar, User } from 'lucide-react'
+import { Download, Youtube, AlertCircle, Loader2, Film, Music, FileVideo, FileAudio, Play, Moon, Sun, Eye, ThumbsUp, Clock, Calendar, User, RefreshCw } from 'lucide-react'
 
 interface Format {
   format_id: string
@@ -41,6 +41,8 @@ export default function Home() {
   const [activeAudioFormat, setActiveAudioFormat] = useState('m4a')
   const [downloadingFormats, setDownloadingFormats] = useState<Set<string>>(new Set())
   const [isDarkMode, setIsDarkMode] = useState(false)
+  const [formatsTimestamp, setFormatsTimestamp] = useState<number | null>(null)
+  const [isExpired, setIsExpired] = useState(false)
 
   // Load theme preference on mount
   useEffect(() => {
@@ -49,6 +51,17 @@ export default function Home() {
       setIsDarkMode(true)
     }
   }, [])
+
+  // Auto-expire formats after 2 minutes
+  useEffect(() => {
+    if (formatsTimestamp) {
+      const timer = setTimeout(() => {
+        setIsExpired(true)
+      }, 2 * 60 * 1000) // 2 minutes
+
+      return () => clearTimeout(timer)
+    }
+  }, [formatsTimestamp])
 
   // Save theme preference
   const toggleTheme = () => {
@@ -67,6 +80,8 @@ export default function Home() {
     setError('')
     setFormats([])
     setVideoInfo(null)
+    setIsExpired(false)
+    setFormatsTimestamp(null)
 
     try {
       const response = await fetch('/api/formats', {
@@ -85,6 +100,7 @@ export default function Home() {
 
       setVideoInfo(data.videoInfo)
       setFormats(data.formats)
+      setFormatsTimestamp(Date.now())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
@@ -93,6 +109,11 @@ export default function Home() {
   }
 
   const handleDownload = async (formatId: string, resolution: string, ext: string) => {
+    if (isExpired) {
+      setError('Download links have expired. Please search again.')
+      return
+    }
+
     setDownloadingFormats(prev => new Set(prev).add(formatId))
     
     try {
@@ -199,16 +220,18 @@ export default function Home() {
     }
   }
 
-  // Filter and organize formats
+  // Filter and organize formats - ONLY SHOW FORMATS WITH FILE SIZE
   const videoFormats = formats.filter(f => 
     f.vcodec && f.vcodec !== 'none' && 
     !f.format_note?.includes('storyboard') &&
-    f.resolution && f.resolution !== 'audio only'
+    f.resolution && f.resolution !== 'audio only' &&
+    f.filesize && f.filesize > 0 // Only show formats with file size
   )
 
   const audioFormats = formats.filter(f => 
     f.acodec && f.acodec !== 'none' && 
-    (f.resolution === 'audio only' || !f.vcodec || f.vcodec === 'none')
+    (f.resolution === 'audio only' || !f.vcodec || f.vcodec === 'none') &&
+    f.filesize && f.filesize > 0 // Only show formats with file size
   )
 
   // Group video formats by extension and resolution
@@ -340,12 +363,12 @@ export default function Home() {
         <div className="flex items-center justify-center gap-3 mb-6">
           <div className="flex items-center gap-2">
             {getFormatIcon(format.ext)}
-            <span className="font-semibold text-lg" style={{ color: colors.text }}>
+            <span className="font-bold text-lg" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>
               {format.ext?.toUpperCase()}
             </span>
           </div>
           <span 
-            className="text-xs px-3 py-1 rounded-full font-mono"
+            className="text-xs px-3 py-1 rounded-full font-mono font-medium"
             style={{ 
               backgroundColor: isDarkMode ? '#374151' : '#e2e8f0',
               color: colors.textMuted 
@@ -358,44 +381,43 @@ export default function Home() {
         {/* Quality Badge */}
         {format.resolution && format.resolution !== 'audio only' && (
           <div className="mb-6">
-            <span className="inline-block bg-[#334155] text-white px-4 py-2 rounded-2xl text-sm font-medium">
+            <span className="inline-block bg-[#334155] text-white px-4 py-2 rounded-2xl text-sm font-semibold" style={{ fontFamily: 'Poppins, sans-serif' }}>
               {format.resolution}
             </span>
           </div>
         )}
 
         {/* Details */}
-        <div className="space-y-3 mb-8" style={{ color: colors.textSecondary }}>
-          {format.filesize && (
-            <div className="flex justify-between items-center">
-              <span className="text-sm">Size:</span>
-              <span className="font-medium" style={{ color: colors.text }}>{formatFileSize(format.filesize)}</span>
-            </div>
-          )}
+        <div className="space-y-3 mb-8" style={{ color: colors.textSecondary, fontFamily: 'Inter, sans-serif' }}>
+          {/* Always show file size since we're filtering by it */}
+          <div className="flex justify-between items-center">
+            <span className="text-sm font-medium">Size:</span>
+            <span className="font-semibold" style={{ color: colors.text }}>{formatFileSize(format.filesize)}</span>
+          </div>
           
           {format.fps && (
             <div className="flex justify-between items-center">
-              <span className="text-sm">FPS:</span>
-              <span className="font-medium" style={{ color: colors.text }}>{format.fps}</span>
+              <span className="text-sm font-medium">FPS:</span>
+              <span className="font-semibold" style={{ color: colors.text }}>{format.fps}</span>
             </div>
           )}
 
           {format.vcodec && format.vcodec !== 'none' && (
             <div className="flex justify-between items-center">
-              <span className="text-sm">Video:</span>
-              <span className="font-medium text-xs" style={{ color: colors.text }}>{format.vcodec}</span>
+              <span className="text-sm font-medium">Video:</span>
+              <span className="font-semibold text-xs" style={{ color: colors.text }}>{format.vcodec}</span>
             </div>
           )}
 
           {format.acodec && format.acodec !== 'none' && (
             <div className="flex justify-between items-center">
-              <span className="text-sm">Audio:</span>
-              <span className="font-medium text-xs" style={{ color: colors.text }}>{format.acodec}</span>
+              <span className="text-sm font-medium">Audio:</span>
+              <span className="font-semibold text-xs" style={{ color: colors.text }}>{format.acodec}</span>
             </div>
           )}
 
           {format.format_note && (
-            <div className="text-xs mt-4 opacity-80" style={{ color: colors.textMuted }}>
+            <div className="text-xs mt-4 opacity-80 font-medium" style={{ color: colors.textMuted }}>
               {format.format_note}
             </div>
           )}
@@ -404,32 +426,34 @@ export default function Home() {
         {/* Download Button */}
         <button
           onClick={() => handleDownload(format.format_id, format.resolution || '', format.ext)}
-          disabled={isDownloading}
+          disabled={isDownloading || isExpired}
           className={`
             w-full py-4 px-6 rounded-2xl font-bold text-lg tracking-wide transition-all duration-300 relative overflow-hidden
-            ${isDownloading 
+            ${isDownloading || isExpired
               ? 'cursor-not-allowed' 
               : 'hover:-translate-y-1 hover:shadow-[0_15px_35px_rgba(51,65,85,0.35)] shadow-[0_8px_25px_rgba(51,65,85,0.25)]'
             }
           `}
           style={{ 
-            fontFamily: 'Bangers, cursive',
-            backgroundColor: isDownloading ? (isDarkMode ? '#374151' : '#cbd5e1') : '#334155',
-            color: isDownloading ? (isDarkMode ? '#6b7280' : '#94a3b8') : 'white'
+            fontFamily: 'Poppins, sans-serif',
+            backgroundColor: (isDownloading || isExpired) ? (isDarkMode ? '#374151' : '#cbd5e1') : '#334155',
+            color: (isDownloading || isExpired) ? (isDarkMode ? '#6b7280' : '#94a3b8') : 'white'
           }}
           onMouseEnter={(e) => {
-            if (!isDownloading) {
+            if (!isDownloading && !isExpired) {
               e.currentTarget.style.backgroundColor = '#1e293b'
             }
           }}
           onMouseLeave={(e) => {
-            if (!isDownloading) {
+            if (!isDownloading && !isExpired) {
               e.currentTarget.style.backgroundColor = '#334155'
             }
           }}
         >
           <span className="relative z-10 flex items-center justify-center gap-2">
-            {isDownloading ? (
+            {isExpired ? (
+              'EXPIRED'
+            ) : isDownloading ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
                 DOWNLOADING...
@@ -441,7 +465,7 @@ export default function Home() {
               </>
             )}
           </span>
-          {!isDownloading && (
+          {!isDownloading && !isExpired && (
             <div className="absolute top-0 left-[-100%] w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-left duration-500 hover:left-[100%]"></div>
           )}
         </button>
@@ -453,12 +477,12 @@ export default function Home() {
     <>
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-      <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Lato:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
       
       <div 
         className="min-h-screen overflow-x-hidden transition-colors duration-300" 
         style={{ 
-          fontFamily: 'Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', 
+          fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', 
           lineHeight: '1.6',
           backgroundColor: colors.bg,
           color: colors.text
@@ -487,10 +511,10 @@ export default function Home() {
             <div className="flex items-center justify-center gap-4 mb-8">
               <Youtube className="w-12 h-12 text-red-600 opacity-0 animate-[fadeInUp_1s_ease_0.1s_forwards] hover:-translate-y-0.5 hover:scale-105 transition-all duration-300 filter drop-shadow-[0_4px_20px_rgba(44,62,80,0.15)]" />
             </div>
-            <h1 className="text-[4.5rem] mb-5 tracking-[3px] relative" style={{ fontFamily: 'Bangers, cursive', color: colors.text }}>
+            <h1 className="text-6xl font-black mb-5 tracking-tight relative" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
               DEBU TUBE
             </h1>
-            <p className="text-xl font-normal mb-0" style={{ color: colors.textSecondary }}>
+            <p className="text-xl font-medium mb-0" style={{ color: colors.textSecondary, fontFamily: 'Inter, sans-serif' }}>
               Download any YouTube video in the format you want
             </p>
           </div>
@@ -515,10 +539,10 @@ export default function Home() {
               <div className="text-6xl mb-6 transition-all duration-300 hover:scale-110" style={{ color: isDarkMode ? '#64748b' : '#8fa3b3' }}>
                 🎥
               </div>
-              <div className="text-2xl mb-3 font-medium transition-colors duration-300" style={{ color: colors.text }}>
+              <div className="text-2xl mb-3 font-bold transition-colors duration-300" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>
                 {url ? `URL: ${url.substring(0, 50)}${url.length > 50 ? '...' : ''}` : 'Paste your YouTube URL here'}
               </div>
-              <div className="text-base font-normal" style={{ color: colors.textMuted }}>
+              <div className="text-base font-medium" style={{ color: colors.textMuted, fontFamily: 'Inter, sans-serif' }}>
                 Supports all YouTube video URLs • Get all available formats
               </div>
               <input
@@ -526,11 +550,12 @@ export default function Home() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=..."
-                className="w-full mt-6 px-4 py-4 border rounded-xl text-lg focus:outline-none transition-all duration-300"
+                className="w-full mt-6 px-4 py-4 border rounded-xl text-lg focus:outline-none transition-all duration-300 font-medium"
                 style={{
                   backgroundColor: colors.inputBg,
                   borderColor: colors.inputBorder,
-                  color: colors.text
+                  color: colors.text,
+                  fontFamily: 'Inter, sans-serif'
                 }}
                 onFocus={(e) => {
                   e.currentTarget.style.borderColor = colors.inputFocus
@@ -548,14 +573,14 @@ export default function Home() {
               onClick={handleGetFormats}
               disabled={loading}
               className={`
-                block mx-auto mb-12 py-5 px-12 rounded-2xl text-2xl tracking-wide cursor-pointer transition-all duration-300 min-w-[220px] relative overflow-hidden border-none
+                block mx-auto mb-12 py-5 px-12 rounded-2xl text-xl font-bold tracking-wide cursor-pointer transition-all duration-300 min-w-[240px] relative overflow-hidden border-none
                 ${loading 
                   ? 'cursor-not-allowed shadow-[0_4px_15px_rgba(203,213,225,0.3)]' 
                   : 'hover:-translate-y-1 hover:shadow-[0_15px_35px_rgba(51,65,85,0.35)] shadow-[0_8px_25px_rgba(51,65,85,0.25)]'
                 }
               `}
               style={{ 
-                fontFamily: 'Bangers, cursive',
+                fontFamily: 'Poppins, sans-serif',
                 backgroundColor: loading ? (isDarkMode ? '#374151' : '#cbd5e1') : '#334155',
                 color: loading ? (isDarkMode ? '#6b7280' : '#94a3b8') : 'white'
               }}
@@ -596,18 +621,47 @@ export default function Home() {
               style={{
                 backgroundColor: colors.errorBg,
                 borderColor: colors.errorBorder,
-                color: colors.errorText
+                color: colors.errorText,
+                fontFamily: 'Inter, sans-serif'
               }}
             >
               <div className="flex items-center justify-center gap-2">
                 <AlertCircle className="w-5 h-5" />
-                <span><strong>Error:</strong> {error}</span>
+                <span className="font-semibold"><strong>Error:</strong> {error}</span>
               </div>
             </div>
           )}
 
+          {/* Expiration Warning */}
+          {isExpired && videoInfo && (
+            <div 
+              className="mx-auto mb-12 p-8 rounded-2xl text-center opacity-0 animate-[fadeInUp_0.5s_ease_forwards] border"
+              style={{
+                backgroundColor: isDarkMode ? '#f59e0b1a' : '#fef3c7',
+                borderColor: '#f59e0b',
+                color: isDarkMode ? '#fbbf24' : '#92400e',
+                fontFamily: 'Inter, sans-serif'
+              }}
+            >
+              <div className="flex items-center justify-center gap-2 mb-4">
+                <Clock className="w-5 h-5" />
+                <span className="font-bold" style={{ fontFamily: 'Poppins, sans-serif' }}>Download Links Expired</span>
+              </div>
+              <p className="mb-4 font-medium">Download links expire after 2 minutes for security. Please search again to get fresh links.</p>
+              <button
+                onClick={handleGetFormats}
+                disabled={loading}
+                className="flex items-center gap-2 mx-auto px-6 py-3 rounded-xl font-bold transition-all duration-300 bg-[#f59e0b] text-white hover:bg-[#d97706]"
+                style={{ fontFamily: 'Poppins, sans-serif' }}
+              >
+                <RefreshCw className="w-4 h-4" />
+                Search Again
+              </button>
+            </div>
+          )}
+
           {/* Video Information Section */}
-          {videoInfo && (
+          {videoInfo && !isExpired && (
             <div 
               className="mb-16 opacity-0 animate-[fadeInUp_0.5s_ease_forwards] rounded-3xl overflow-hidden shadow-[0_8px_32px_rgba(44,62,80,0.15)]"
               style={{
@@ -616,13 +670,13 @@ export default function Home() {
               }}
             >
               <div className="relative">
-                {/* Thumbnail */}
+                {/* Thumbnail - FIXED: Use object-contain to prevent cropping */}
                 {videoInfo.thumbnail && (
-                  <div className="relative h-64 overflow-hidden">
+                  <div className="relative h-64 overflow-hidden bg-black">
                     <img 
                       src={videoInfo.thumbnail} 
                       alt={videoInfo.title}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
                   </div>
@@ -631,39 +685,39 @@ export default function Home() {
                 {/* Video Info Content */}
                 <div className="p-8">
                   {/* Title */}
-                  <h2 className="text-3xl font-bold mb-4 leading-tight" style={{ color: colors.text }}>
+                  <h2 className="text-3xl font-bold mb-4 leading-tight" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>
                     {videoInfo.title}
                   </h2>
 
                   {/* Stats Row */}
-                  <div className="flex flex-wrap gap-6 mb-6 text-sm" style={{ color: colors.textSecondary }}>
+                  <div className="flex flex-wrap gap-6 mb-6 text-sm font-medium" style={{ color: colors.textSecondary, fontFamily: 'Inter, sans-serif' }}>
                     <div className="flex items-center gap-2">
                       <User className="w-4 h-4" />
-                      <span>{videoInfo.channel}</span>
+                      <span className="font-semibold">{videoInfo.channel}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Eye className="w-4 h-4" />
-                      <span>{formatNumber(videoInfo.view_count)} views</span>
+                      <span className="font-semibold">{formatNumber(videoInfo.view_count)} views</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <ThumbsUp className="w-4 h-4" />
-                      <span>{formatNumber(videoInfo.like_count)} likes</span>
+                      <span className="font-semibold">{formatNumber(videoInfo.like_count)} likes</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Clock className="w-4 h-4" />
-                      <span>{formatDuration(videoInfo.duration)}</span>
+                      <span className="font-semibold">{formatDuration(videoInfo.duration)}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Calendar className="w-4 h-4" />
-                      <span>{formatDate(videoInfo.upload_date)}</span>
+                      <span className="font-semibold">{formatDate(videoInfo.upload_date)}</span>
                     </div>
                   </div>
 
                   {/* Description */}
                   {videoInfo.description && (
                     <div 
-                      className="text-sm leading-relaxed max-h-32 overflow-hidden"
-                      style={{ color: colors.textMuted }}
+                      className="text-sm leading-relaxed max-h-32 overflow-hidden font-medium"
+                      style={{ color: colors.textMuted, fontFamily: 'Inter, sans-serif' }}
                     >
                       {videoInfo.description.slice(0, 300)}
                       {videoInfo.description.length > 300 && '...'}
@@ -675,7 +729,7 @@ export default function Home() {
           )}
 
           {/* Formats Section */}
-          {formats.length > 0 && (
+          {formats.length > 0 && !isExpired && (
             <div className="mb-12 opacity-0 animate-[fadeInUp_0.5s_ease_forwards]">
               {/* Tab Navigation */}
               <div className="flex justify-center mb-12 gap-4">
@@ -689,7 +743,7 @@ export default function Home() {
                     }
                   `}
                   style={{ 
-                    fontFamily: 'Bangers, cursive',
+                    fontFamily: 'Poppins, sans-serif',
                     ...(activeTab !== 'video' && {
                       backgroundColor: colors.cardBg,
                       color: colors.text,
@@ -711,7 +765,7 @@ export default function Home() {
                 >
                   <Film className="w-5 h-5" />
                   VIDEO FORMATS
-                  <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm">
+                  <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm font-bold">
                     {videoFormats.length}
                   </span>
                 </button>
@@ -725,7 +779,7 @@ export default function Home() {
                     }
                   `}
                   style={{ 
-                    fontFamily: 'Bangers, cursive',
+                    fontFamily: 'Poppins, sans-serif',
                     ...(activeTab !== 'audio' && {
                       backgroundColor: colors.cardBg,
                       color: colors.text,
@@ -747,7 +801,7 @@ export default function Home() {
                 >
                   <Music className="w-5 h-5" />
                   AUDIO ONLY
-                  <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm">
+                  <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm font-bold">
                     {audioFormats.length}
                   </span>
                 </button>
@@ -756,20 +810,21 @@ export default function Home() {
               {/* Format Type Selectors */}
               {activeTab === 'video' && availableVideoFormats.length > 0 && (
                 <div className="mb-12">
-                  <h3 className="text-2xl font-semibold mb-6 text-center" style={{ color: colors.text }}>Select Format Type:</h3>
+                  <h3 className="text-2xl font-bold mb-6 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Format Type:</h3>
                   <div className="flex justify-center gap-4 flex-wrap">
                     {availableVideoFormats.map(format => (
                       <button
                         key={format}
                         onClick={() => setActiveVideoFormat(format)}
                         className={`
-                          flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all duration-300 border
+                          flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all duration-300 border
                           ${activeVideoFormat === format
                             ? 'bg-[#334155] text-white shadow-lg'
                             : ''
                           }
                         `}
                         style={{
+                          fontFamily: 'Poppins, sans-serif',
                           ...(activeVideoFormat !== format && {
                             backgroundColor: colors.cardBg,
                             color: colors.text,
@@ -791,7 +846,7 @@ export default function Home() {
                       >
                         {getFormatIcon(format)}
                         {format.toUpperCase()}
-                        <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm">
+                        <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm font-bold">
                           {Object.keys(groupedVideoFormats[format]).length}
                         </span>
                       </button>
@@ -802,20 +857,21 @@ export default function Home() {
 
               {activeTab === 'audio' && availableAudioFormats.length > 0 && (
                 <div className="mb-12">
-                  <h3 className="text-2xl font-semibold mb-6 text-center" style={{ color: colors.text }}>Select Audio Format:</h3>
+                  <h3 className="text-2xl font-bold mb-6 text-center" style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}>Select Audio Format:</h3>
                   <div className="flex justify-center gap-4 flex-wrap">
                     {availableAudioFormats.map(format => (
                       <button
                         key={format}
                         onClick={() => setActiveAudioFormat(format)}
                         className={`
-                          flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all duration-300 border
+                          flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all duration-300 border
                           ${activeAudioFormat === format
                             ? 'bg-[#059669] text-white shadow-lg'
                             : ''
                           }
                         `}
                         style={{
+                          fontFamily: 'Poppins, sans-serif',
                           ...(activeAudioFormat !== format && {
                             backgroundColor: colors.cardBg,
                             color: colors.text,
@@ -837,7 +893,7 @@ export default function Home() {
                       >
                         {getFormatIcon(format)}
                         {format.toUpperCase()}
-                        <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm">
+                        <span className="bg-white bg-opacity-20 px-2 py-1 rounded text-sm font-bold">
                           {groupedAudioFormats[format].length}
                         </span>
                       </button>
@@ -851,7 +907,7 @@ export default function Home() {
                 <div className="space-y-16">
                   {sortResolutions(Object.keys(groupedVideoFormats[activeVideoFormat])).map(resolution => (
                     <div key={resolution}>
-                      <h4 className="text-3xl font-bold mb-8 text-center" style={{ fontFamily: 'Bangers, cursive', color: colors.text }}>
+                      <h4 className="text-3xl font-black mb-8 text-center" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
                         {resolution} - {activeVideoFormat.toUpperCase()}
                       </h4>
                       <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
@@ -866,7 +922,7 @@ export default function Home() {
 
               {activeTab === 'audio' && activeAudioFormat && groupedAudioFormats[activeAudioFormat] && (
                 <div>
-                  <h4 className="text-3xl font-bold mb-8 text-center" style={{ fontFamily: 'Bangers, cursive', color: colors.text }}>
+                  <h4 className="text-3xl font-black mb-8 text-center" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
                     {activeAudioFormat.toUpperCase()} AUDIO FILES
                   </h4>
                   <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
@@ -881,8 +937,8 @@ export default function Home() {
 
           {/* Footer */}
           <div className="text-center mt-16">
-            <p className="text-sm opacity-80" style={{ color: colors.textMuted }}>
-              DebuTube - Debu
+            <p className="text-sm opacity-80 font-medium" style={{ color: colors.textMuted, fontFamily: 'Inter, sans-serif' }}>
+              DebuTube - Professional YouTube Downloader
             </p>
           </div>
         </div>
