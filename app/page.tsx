@@ -503,11 +503,16 @@ export default function Home() {
           {/* Header */}
           <div className="text-center mb-20 opacity-0 animate-[fadeInUp_1s_ease_0.2s_forwards]">
             <div className="flex items-center justify-center gap-4 mb-8">
-              <img 
-                src="/logo.png" 
-                alt="DebuTube Logo" 
-                className="w-16 h-16 opacity-0 animate-[fadeInUp_1s_ease_0.1s_forwards] hover:-translate-y-0.5 hover:scale-105 transition-all duration-300 filter drop-shadow-[0_4px_20px_rgba(44,62,80,0.15)]"
-              />
+              <div className="relative">
+                <img 
+                  src="/logo.png" 
+                  alt="DebuTube Logo" 
+                  className="w-48 h-48 object-contain opacity-0 animate-[fadeInUp_1s_ease_0.1s_forwards] hover:-translate-y-0.5 hover:scale-105 transition-all duration-300 filter drop-shadow-[0_4px_20px_rgba(44,62,80,0.15)]"
+                  style={{ 
+                    imageRendering: 'auto'
+                  }}
+                />
+              </div>
             </div>
             <h1 className="text-6xl font-black mb-5 tracking-tight relative" style={{ fontFamily: 'Poppins, sans-serif', color: colors.text }}>
               DEBU TUBE
