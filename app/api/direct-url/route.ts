@@ -3,67 +3,88 @@ import { spawn } from 'child_process'
 
 export async function POST(request: NextRequest) {
   try {
-    const { url, formatId } = await request.json()
+    const body = await request.json()
+    
+    // In development, we can try to call Python directly
+    if (process.env.NODE_ENV === 'development') {
+      const { url, formatId } = body
+      
+      if (!url || !formatId) {
+        return NextResponse.json({ error: 'URL and formatId are required' }, { status: 400 })
+      }
 
-    if (!url || !formatId) {
-      return NextResponse.json({ error: 'URL and format ID are required' }, { status: 400 })
+      const result = await getDirectUrl(url, formatId)
+      return NextResponse.json(result)
     }
-
-    // Validate YouTube URL
-    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)\/(watch\?v=|embed\/|v\/|.+\?v=)?([^&=%\?]{11})/
-    if (!youtubeRegex.test(url)) {
-      return NextResponse.json({ error: 'Please provide a valid YouTube URL' }, { status: 400 })
-    }
-
-    const directUrl = await getDirectUrl(url, formatId)
-    return NextResponse.json({ directUrl })
+    
+    // In production, this should not be called as the Python function handles it
+    return NextResponse.json({ error: 'This endpoint should be handled by Python function in production' }, { status: 500 })
+    
   } catch (error) {
     console.error('Error getting direct URL:', error)
     return NextResponse.json(
-      { error: 'Failed to get direct download URL. Please try again.' },
+      { error: 'Failed to get direct URL. Please try again.' },
       { status: 500 }
     )
   }
 }
 
-function getDirectUrl(url: string, formatId: string): Promise<string> {
+function getDirectUrl(url: string, formatId: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    // Use your original working yt-dlp command to get direct URL
-    const child = spawn('python', ['-m', 'yt_dlp', '-g', '-f', formatId, url], {
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString()
-    })
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString()
-    })
-
-    child.on('close', (code: number) => {
-      if (code === 0) {
-        const directUrl = stdout.trim()
-        if (directUrl) {
-          resolve(directUrl)
-        } else {
-          reject(new Error('No direct URL found'))
-        }
-      } else {
-        reject(new Error(`yt-dlp failed: ${stderr || 'Unknown error'}`))
+    // Try different Python executables
+    const pythonCommands = ['python3', 'python', '/usr/bin/python3', '/usr/bin/python']
+    
+    const tryPythonCommand = (commandIndex: number) => {
+      if (commandIndex >= pythonCommands.length) {
+        reject(new Error('Python not found. Please ensure Python and yt-dlp are installed.'))
+        return
       }
-    })
 
-    child.on('error', (error: Error) => {
-      reject(new Error(`Failed to start yt-dlp: ${error.message}`))
-    })
+      const pythonCmd = pythonCommands[commandIndex]
+      console.log(`Trying Python command: ${pythonCmd}`)
+      
+      const child = spawn(pythonCmd, ['-m', 'yt_dlp', '-g', '-f', formatId, url], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+
+      let stdout = ''
+      let stderr = ''
+
+      child.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString()
+      })
+
+      child.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      child.on('close', (code: number) => {
+        if (code === 0) {
+          const directUrl = stdout.trim()
+          if (!directUrl) {
+            reject(new Error('No direct URL found'))
+            return
+          }
+          resolve({ directUrl })
+        } else {
+          console.error(`${pythonCmd} failed with code ${code}, stderr: ${stderr}`)
+          // Try next Python command
+          tryPythonCommand(commandIndex + 1)
+        }
+      })
+
+      child.on('error', (error: Error) => {
+        console.error(`Failed to start ${pythonCmd}:`, error.message)
+        // Try next Python command
+        tryPythonCommand(commandIndex + 1)
+      })
+    }
+
+    // Start with the first Python command
+    tryPythonCommand(0)
 
     // Set timeout
     setTimeout(() => {
-      child.kill()
       reject(new Error('Request timeout'))
     }, 30000)
   })

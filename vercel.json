@@ -1,5 +1,31 @@
 {
-  "installCommand": "npm install && python -m pip install yt-dlp",
-  "buildCommand": "npm run build",
-  "framework": "nextjs"
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    },
+    {
+      "src": "api/formats.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "api/direct-url.py", 
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/formats",
+      "dest": "/api/formats.py"
+    },
+    {
+      "src": "/api/direct-url",
+      "dest": "/api/direct-url.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
+    }
+  ]
 } 

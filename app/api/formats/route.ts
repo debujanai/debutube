@@ -3,20 +3,30 @@ import { spawn } from 'child_process'
 
 export async function POST(request: NextRequest) {
   try {
-    const { url } = await request.json()
+    const body = await request.json()
+    
+    // In development, we can try to call Python directly
+    // In production, this will be handled by the Python serverless function
+    if (process.env.NODE_ENV === 'development') {
+      const { url } = body
+      
+      if (!url) {
+        return NextResponse.json({ error: 'URL is required' }, { status: 400 })
+      }
 
-    if (!url) {
-      return NextResponse.json({ error: 'URL is required' }, { status: 400 })
+      // Validate YouTube URL
+      const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)\/(watch\?v=|embed\/|v\/|.+\?v=)?([^&=%\?]{11})/
+      if (!youtubeRegex.test(url)) {
+        return NextResponse.json({ error: 'Please provide a valid YouTube URL' }, { status: 400 })
+      }
+
+      const result = await getVideoInfo(url)
+      return NextResponse.json(result)
     }
-
-    // Validate YouTube URL
-    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)\/(watch\?v=|embed\/|v\/|.+\?v=)?([^&=%\?]{11})/
-    if (!youtubeRegex.test(url)) {
-      return NextResponse.json({ error: 'Please provide a valid YouTube URL' }, { status: 400 })
-    }
-
-    const result = await getVideoInfo(url)
-    return NextResponse.json(result)
+    
+    // In production, this should not be called as the Python function handles it
+    return NextResponse.json({ error: 'This endpoint should be handled by Python function in production' }, { status: 500 })
+    
   } catch (error) {
     console.error('Error fetching formats:', error)
     return NextResponse.json(
@@ -28,7 +38,7 @@ export async function POST(request: NextRequest) {
 
 function getVideoInfo(url: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    // Try different Python executables for better Vercel compatibility
+    // Try different Python executables for better compatibility
     const pythonCommands = ['python3', 'python', '/usr/bin/python3', '/usr/bin/python']
     
     const tryPythonCommand = (commandIndex: number) => {
