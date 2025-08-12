@@ -76,6 +76,34 @@ class CookieManager:
         except Exception:
             pass
 
+# Hardcoded YouTube cookies for Vercel deployment (temporary)
+HARDCODED_YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
+# http://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file!  Do not edit.
+
+.youtube.com	TRUE	/	TRUE	1789524374	PREF	tz=Asia.Karachi&f6=40000000&f5=20000&f7=100
+.youtube.com	TRUE	/	TRUE	1767266244	VISITOR_INFO1_LIVE	ZzXSMVagoSc
+.youtube.com	TRUE	/	TRUE	1767266244	VISITOR_PRIVACY_METADATA	CgJQSxIEGgAgJQ%3D%3D
+.youtube.com	TRUE	/	FALSE	1789513636	HSID	AlFtsF_hfYaNDL1nS
+.youtube.com	TRUE	/	TRUE	1789513636	SSID	AlmYdbysVQcG8ft7s
+.youtube.com	TRUE	/	FALSE	1789513636	APISID	quDZ96FGcG6lvYiO/Abfb-nZz8zBiVjlUa
+.youtube.com	TRUE	/	TRUE	1789513636	SAPISID	KCbPbd1QMDDqCblq/ALiPffGNkTmxEyyfe
+.youtube.com	TRUE	/	TRUE	1789513636	__Secure-1PAPISID	KCbPbd1QMDDqCblq/ALiPffGNkTmxEyyfe
+.youtube.com	TRUE	/	TRUE	1789513636	__Secure-3PAPISID	KCbPbd1QMDDqCblq/ALiPffGNkTmxEyyfe
+.youtube.com	TRUE	/	FALSE	1789513636	SID	g.a0000AisQoz5BGjCDzkcZkMMUdpGTxftXzQWUcJaTvCDCcsrr4y-qAkWMmd3MeHZ2NbDyc-hygACgYKAVsSARASFQHGX2MipF_mgbhctDzDqmJCiw97WBoVAUF8yKqSlPCgeswf_9LlyNuvVp7E0076
+.youtube.com	TRUE	/	TRUE	1789513636	__Secure-1PSID	g.a0000AisQoz5BGjCDzkcZkMMUdpGTxftXzQWUcJaTvCDCcsrr4y-kMyayDq883XTxPSGUDbPwQACgYKAR8SARASFQHGX2MiVFr01GHSomS0ORmD1UIdcxoVAUF8yKrHona74JR0X7unKetXbZAL0076
+.youtube.com	TRUE	/	TRUE	1789513636	__Secure-3PSID	g.a0000AisQoz5BGjCDzkcZkMMUdpGTxftXzQWUcJaTvCDCcsrr4y-iyejOpq4uXy1try0tUcsLAACgYKAVISARASFQHGX2MiEEmsImZZHBlY5v_V01ba0BoVAUF8yKquVawLu0leB0O7Cd8FuBhQ0076
+.youtube.com	TRUE	/	TRUE	1789524375	LOGIN_INFO	AFmmF2swRQIhAP7xURVtxk4ONVkiuFP_jzYSS-EnwK_388K7A9a-UcpTAiAVBd14LFVZD7aGrVQU6m6HATr8JHySWl5a1P7Wm6-4VQ:QUQ3MjNmeTZmZkZlaXNCakxTZ0RtUVJqVzlob1JxUVQzNG9LalpMWmJPekE0SVJrdnRLaGhodEVxcGp4UDZWcUpUc25aWXAtQjlwLUxoUE10Wl80dVBHTFJIdkhtaHNLd2ZVYnRsOFk3eXVReUY0a3JldG5ZSUtFMVlnWGZkc3V0dW96blBzbmNXSHVzRFB1aTRBc3h2UTNSTThkVldPZmxB
+.youtube.com	TRUE	/	TRUE	1786500377	__Secure-1PSIDTS	sidts-CjUB5H03P8EeAatusvoG9vQeeP8RLDCl6lznQhNPaFvSBHkGjhYawKpzLggl6Fjwet-DbjpA4hAA
+.youtube.com	TRUE	/	TRUE	1786500377	__Secure-3PSIDTS	sidts-CjUB5H03P8EeAatusvoG9vQeeP8RLDCl6lznQhNPaFvSBHkGjhYawKpzLggl6Fjwet-DbjpA4hAA
+.youtube.com	TRUE	/	FALSE	1786500385	SIDCC	AKEyXzWLdoarLp3F_zS8PJF0PwDLWK_9gkbymtG4YiOd2gq5Yb_CpXwaKIe5kquTtbuh2DHw
+.youtube.com	TRUE	/	TRUE	1786500385	__Secure-1PSIDCC	AKEyXzWcPmGDnnkt6LZzITI1R78BXoLrwMyhccO4oldt3bXUPk8yo_rcGioCtllVDv4E84iO_g
+.youtube.com	TRUE	/	TRUE	1786500385	__Secure-3PSIDCC	AKEyXzU9issa2apSvH_p_qMmTFHszmcIgelaJIgWowxJ50Xo6NDfS_WJgihZQyudRJArgVO6og
+.youtube.com	TRUE	/	TRUE	1770516375	VISITOR_INFO1_LIVE	z5Mp1mNC6Jg
+.youtube.com	TRUE	/	TRUE	1770516375	VISITOR_PRIVACY_METADATA	CgJQSxIEGgAgNQ%3D%3D
+.youtube.com	TRUE	/	TRUE	0	YSC	pn7g_g9UaM0
+.youtube.com	TRUE	/	TRUE	1770516372	__Secure-ROLLOUT_TOKEN	CN-7zd-9gp_hIhCV2vLd0t-NAxiRiPvfl4SPAw%3D%3D"""
+
 def get_ytdlp_base_options(url, cookie_file=None):
     """Get base yt-dlp options optimized for Vercel serverless environment with cookie support"""
     temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
@@ -92,21 +120,54 @@ def get_ytdlp_base_options(url, cookie_file=None):
         '--socket-timeout', '30',
         '--no-check-certificate',  # Skip SSL verification issues
         '--no-warnings',  # Reduce noise in logs
+        '--add-header', 'Accept-Language:en-US,en;q=0.9',  # Add language header
+        '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',  # Add accept header
     ]
+    
+    # Add cookie support - prioritize hardcoded cookies for now
+    cookie_manager = CookieManager()
+    
+    # Use hardcoded cookies if no specific cookies provided
+    if not cookie_file:
+        hardcoded_cookie_file = cookie_manager.save_cookies(HARDCODED_YOUTUBE_COOKIES, 'hardcoded_session')
+        if hardcoded_cookie_file:
+            base_options.extend(['--cookies', hardcoded_cookie_file])
+            return base_options, temp_cache_dir, hardcoded_cookie_file
     
     # Add cookie support if provided
     if cookie_file and os.path.exists(cookie_file):
         base_options.extend(['--cookies', cookie_file])
     
-    # Add environment-specific options
+    # Add environment-specific options as fallback
     env_cookies = os.environ.get('YTDLP_COOKIES')
     if env_cookies and not cookie_file:
-        cookie_manager = CookieManager()
         env_cookie_file = cookie_manager.save_cookies(env_cookies, 'env_session')
         if env_cookie_file:
             base_options.extend(['--cookies', env_cookie_file])
     
-    return base_options, temp_cache_dir
+    return base_options, temp_cache_dir, None
+
+def validate_cookie_content(cookie_content):
+    """Validate if cookie content has essential YouTube authentication tokens"""
+    if not cookie_content:
+        return False, "No cookies provided"
+    
+    # Essential YouTube authentication cookies
+    essential_cookies = ['SAPISID', 'HSID', 'SSID', 'APISID', 'SID']
+    found_essential = []
+    
+    for cookie_name in essential_cookies:
+        if cookie_name in cookie_content:
+            found_essential.append(cookie_name)
+    
+    if not found_essential:
+        return False, f"Missing essential authentication cookies. Found: {', '.join(found_essential) if found_essential else 'None'}. Required: {', '.join(essential_cookies)}"
+    
+    # Check if we have at least SAPISID which is most important
+    if 'SAPISID' not in cookie_content:
+        return False, "Missing SAPISID cookie which is essential for YouTube authentication"
+    
+    return True, f"Found {len(found_essential)} essential cookies: {', '.join(found_essential)}"
 
 def cleanup_temp_dir(temp_dir):
     """Clean up temporary directory"""
@@ -128,6 +189,7 @@ def get_formats():
     
     cookie_manager = CookieManager()
     cookie_file = None
+    hardcoded_cookie_file = None
     
     try:
         # Clean up old sessions
@@ -151,8 +213,20 @@ def get_formats():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Handle cookies if provided
+        # Handle and validate cookies if provided
         if cookies:
+            # Validate cookie content first
+            is_valid, validation_message = validate_cookie_content(cookies)
+            if not is_valid:
+                response = jsonify({
+                    'error': f'Invalid cookies: {validation_message}',
+                    'help': 'Please export cookies from an authenticated YouTube session. Make sure you are logged in when exporting cookies.',
+                    'guide': 'Run: python cookie_helper.py export-guide'
+                })
+                response.status_code = 400
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+            
             cookie_file = cookie_manager.save_cookies(cookies)
             if not cookie_file:
                 response = jsonify({'error': 'Failed to process cookies'})
@@ -162,7 +236,7 @@ def get_formats():
         
         # Run yt-dlp to get video information with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, cookie_file)
+            base_options, temp_cache_dir, hardcoded_cookie_file = get_ytdlp_base_options(url, cookie_file)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -180,22 +254,50 @@ def get_formats():
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
-            # Clean up temp directory and cookie file
+            # Clean up temp directory and cookie files
             cleanup_temp_dir(temp_cache_dir)
             if cookie_file:
                 cookie_manager.cleanup_cookie_file(cookie_file)
+            if hardcoded_cookie_file:
+                cookie_manager.cleanup_cookie_file(hardcoded_cookie_file)
             
             if result.returncode != 0:
                 error_msg = result.stderr
                 # Provide more helpful error messages
                 if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
-                    error_msg = 'YouTube bot detection triggered. Please provide valid cookies or try again later.'
+                    if not cookies:
+                        error_response = {
+                            'error': 'YouTube bot detection triggered. Using hardcoded cookies but they may be expired.',
+                            'help': 'The hardcoded authentication cookies may need refreshing.',
+                            'guide': 'Try providing fresh cookies or contact support',
+                            'solution': 'Hardcoded cookies are being used but may be expired'
+                        }
+                    else:
+                        error_response = {
+                            'error': 'YouTube bot detection triggered despite cookies. Your cookies may be invalid or expired.',
+                            'help': 'Please re-export your cookies following the exact process.',
+                            'guide': 'Run: python cookie_helper.py export-guide',
+                            'solution': 'Make sure to: 1) Use private/incognito window, 2) Login to YouTube, 3) Navigate to robots.txt, 4) Export cookies, 5) Close private window immediately'
+                        }
                 elif 'Private video' in error_msg or 'members-only' in error_msg.lower():
-                    error_msg = 'This video requires authentication. Please provide valid YouTube cookies.'
+                    error_response = {
+                        'error': 'This video requires authentication or special access.',
+                        'help': 'Please provide valid YouTube cookies from an account that has access to this content.',
+                        'solution': 'Make sure your account has access to this private/members-only content'
+                    }
                 elif 'age-restricted' in error_msg.lower():
-                    error_msg = 'This video is age-restricted. Please provide valid YouTube cookies to access it.'
+                    error_response = {
+                        'error': 'This video is age-restricted.',
+                        'help': 'Please provide valid YouTube cookies from an age-verified account.',
+                        'solution': 'Make sure your YouTube account is verified for age-restricted content'
+                    }
+                else:
+                    error_response = {
+                        'error': f'yt-dlp failed: {error_msg}',
+                        'help': 'Check the error message above for specific details.'
+                    }
                 
-                response = jsonify({'error': f'yt-dlp failed: {error_msg}'})
+                response = jsonify(error_response)
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
@@ -245,7 +347,8 @@ def get_formats():
             
             response = jsonify({
                 'videoInfo': video_metadata,
-                'formats': filtered_formats
+                'formats': filtered_formats,
+                'using_hardcoded_cookies': not bool(cookies)  # Debug info
             })
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
@@ -272,9 +375,11 @@ def get_formats():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
     finally:
-        # Always cleanup cookie file
+        # Always cleanup cookie files
         if cookie_file:
             cookie_manager.cleanup_cookie_file(cookie_file)
+        if hardcoded_cookie_file:
+            cookie_manager.cleanup_cookie_file(hardcoded_cookie_file)
 
 @app.route('/api/direct-url', methods=['POST', 'OPTIONS'])
 def get_direct_url():
@@ -288,6 +393,7 @@ def get_direct_url():
     
     cookie_manager = CookieManager()
     cookie_file = None
+    hardcoded_cookie_file = None
     
     try:
         data = request.get_json()
@@ -307,7 +413,7 @@ def get_direct_url():
         
         # Run yt-dlp to get direct URL with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, cookie_file)
+            base_options, temp_cache_dir, hardcoded_cookie_file = get_ytdlp_base_options(url, cookie_file)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -325,10 +431,12 @@ def get_direct_url():
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
-            # Clean up temp directory and cookie file
+            # Clean up temp directory and cookie files
             cleanup_temp_dir(temp_cache_dir)
             if cookie_file:
                 cookie_manager.cleanup_cookie_file(cookie_file)
+            if hardcoded_cookie_file:
+                cookie_manager.cleanup_cookie_file(hardcoded_cookie_file)
             
             if result.returncode != 0:
                 response = jsonify({'error': f'Failed to get direct URL: {result.stderr}'})
@@ -344,7 +452,10 @@ def get_direct_url():
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
             
-            response = jsonify({'directUrl': direct_url})
+            response = jsonify({
+                'directUrl': direct_url,
+                'using_hardcoded_cookies': not bool(cookies)  # Debug info
+            })
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
             
@@ -365,9 +476,11 @@ def get_direct_url():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
     finally:
-        # Always cleanup cookie file
+        # Always cleanup cookie files
         if cookie_file:
             cookie_manager.cleanup_cookie_file(cookie_file)
+        if hardcoded_cookie_file:
+            cookie_manager.cleanup_cookie_file(hardcoded_cookie_file)
 
 # New endpoint for cookie validation
 @app.route('/api/validate-cookies', methods=['POST', 'OPTIONS'])
