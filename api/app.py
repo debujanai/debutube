@@ -7,10 +7,11 @@ import tempfile
 import random
 import time
 from datetime import datetime
+from youtube_session import get_youtube_session
 
 app = Flask(__name__)
 
-# Enhanced user agents with more realistic browser fingerprints
+# Legacy user agents kept for fallback compatibility
 USER_AGENTS = [
     # Chrome on Windows
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
@@ -46,87 +47,6 @@ BROWSER_HEADERS = {
     'Cache-Control': 'max-age=0',
 }
 
-def get_ytdlp_base_options(url):
-    """Get enhanced yt-dlp options with better bot detection avoidance"""
-    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
-    user_agent = random.choice(USER_AGENTS)
-    
-    # Add random delay to avoid rate limiting
-    time.sleep(random.uniform(0.5, 2.0))
-    
-    base_options = [
-        '--no-cache-dir',  # Disable cache completely
-        '--cache-dir', temp_cache_dir,  # Use temp directory for any cache needs
-        '--user-agent', user_agent,
-        '--referer', 'https://www.youtube.com/',
-        
-        # Enhanced anti-bot detection
-        '--add-header', f'Accept:{BROWSER_HEADERS["Accept"]}',
-        '--add-header', f'Accept-Language:{BROWSER_HEADERS["Accept-Language"]}',
-        '--add-header', f'Accept-Encoding:{BROWSER_HEADERS["Accept-Encoding"]}',
-        '--add-header', f'DNT:{BROWSER_HEADERS["DNT"]}',
-        '--add-header', f'Upgrade-Insecure-Requests:{BROWSER_HEADERS["Upgrade-Insecure-Requests"]}',
-        '--add-header', f'Sec-Fetch-Dest:{BROWSER_HEADERS["Sec-Fetch-Dest"]}',
-        '--add-header', f'Sec-Fetch-Mode:{BROWSER_HEADERS["Sec-Fetch-Mode"]}',
-        '--add-header', f'Sec-Fetch-Site:{BROWSER_HEADERS["Sec-Fetch-Site"]}',
-        '--add-header', f'Cache-Control:{BROWSER_HEADERS["Cache-Control"]}',
-        
-        # Network and retry settings
-        '--extractor-retries', '5',  # Increased retries
-        '--fragment-retries', '5',
-        '--retry-sleep', 'linear=2:10:1',  # Progressive backoff
-        '--socket-timeout', '60',  # Increased timeout
-        '--no-check-certificate',
-        
-        # Additional YouTube-specific options
-        '--force-ipv4',  # Force IPv4 to avoid potential IPv6 issues
-        '--sleep-interval', '1',  # Sleep between requests
-        '--max-sleep-interval', '5',
-        
-        # Cookie handling - try to extract from browser if available
-        '--cookies-from-browser', 'chrome',  # Try Chrome first
-        '--ignore-errors',  # Continue on cookie extraction errors
-    ]
-    
-    return base_options, temp_cache_dir
-
-def get_ytdlp_fallback_options(url):
-    """Fallback options when cookie extraction fails"""
-    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_fallback_')
-    user_agent = random.choice(USER_AGENTS)
-    
-    time.sleep(random.uniform(1.0, 3.0))  # Longer delay for fallback
-    
-    fallback_options = [
-        '--no-cache-dir',
-        '--cache-dir', temp_cache_dir,
-        '--user-agent', user_agent,
-        '--referer', 'https://www.youtube.com/',
-        
-        # More aggressive headers
-        '--add-header', f'Accept:{BROWSER_HEADERS["Accept"]}',
-        '--add-header', f'Accept-Language:{BROWSER_HEADERS["Accept-Language"]}',
-        '--add-header', 'X-Forwarded-For:8.8.8.8',  # Use Google DNS IP
-        
-        # Bypass some restrictions
-        '--geo-bypass',
-        '--geo-bypass-country', 'US',
-        
-        # Alternative extraction method
-        '--youtube-skip-dash-manifest',
-        '--no-warnings',
-        
-        # Network settings
-        '--extractor-retries', '3',
-        '--fragment-retries', '3',
-        '--retry-sleep', '5',
-        '--socket-timeout', '30',
-        '--no-check-certificate',
-        '--force-ipv4',
-    ]
-    
-    return fallback_options, temp_cache_dir
-
 def cleanup_temp_dir(temp_dir):
     """Clean up temporary directory"""
     try:
@@ -134,6 +54,61 @@ def cleanup_temp_dir(temp_dir):
         shutil.rmtree(temp_dir, ignore_errors=True)
     except:
         pass
+
+def format_error_message(error_msg, technical_details=None):
+    """Format user-friendly error messages"""
+    error_msg = error_msg.lower() if error_msg else ""
+    
+    if "sign in to confirm you're not a bot" in error_msg:
+        return {
+            'error': 'YouTube is detecting automated access. This video may require authentication or may be age-restricted.',
+            'suggestions': [
+                'Try a different video',
+                'Wait 5-10 minutes before retrying',
+                'Ensure you have Chrome installed and are logged into YouTube',
+                'Check if the video is age-restricted or private'
+            ],
+            'technical_error': technical_details
+        }
+    elif "video unavailable" in error_msg:
+        return {
+            'error': 'This video is not available. It may be private, deleted, or restricted in your region.',
+            'suggestions': [
+                'Check if the video URL is correct',
+                'Verify the video is still available on YouTube',
+                'Try accessing the video in a web browser'
+            ],
+            'technical_error': technical_details
+        }
+    elif "age-restricted" in error_msg or "age restricted" in error_msg:
+        return {
+            'error': 'This video is age-restricted and cannot be accessed without authentication.',
+            'suggestions': [
+                'Log into YouTube in your Chrome browser',
+                'Try a different, non-age-restricted video',
+                'Contact administrator for cookie setup assistance'
+            ],
+            'technical_error': technical_details
+        }
+    elif "private video" in error_msg or "private" in error_msg:
+        return {
+            'error': 'This video is private and cannot be accessed.',
+            'suggestions': [
+                'Ensure you have permission to view this video',
+                'Try a public video instead'
+            ],
+            'technical_error': technical_details
+        }
+    else:
+        return {
+            'error': f'Failed to process video: {technical_details or error_msg}',
+            'suggestions': [
+                'Try again in a few minutes',
+                'Check your internet connection',
+                'Try a different video'
+            ],
+            'technical_error': technical_details
+        }
 
 @app.route('/api/formats', methods=['POST', 'OPTIONS'])
 def get_formats():
@@ -163,142 +138,88 @@ def get_formats():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Run yt-dlp to get video information with enhanced bot detection avoidance
+        # Use advanced TLS client session for extraction
         try:
-            # First attempt with enhanced options (including cookies)
-            base_options, temp_cache_dir = get_ytdlp_base_options(url)
+            print(f"🚀 Processing video with advanced TLS fingerprinting: {url}")
+            youtube_session = get_youtube_session()
             
-            cmd = [
-                sys.executable, '-m', 'yt_dlp',
-                '--dump-json',
-                '--no-download',
-                *base_options,
-                url
-            ]
+            # First attempt with enhanced TLS fingerprinting
+            result = youtube_session.extract_video_info(url, use_stealth=False)
             
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,  # Increased timeout
-                env={**os.environ, 'HOME': '/tmp'}
-            )
+            if not result.get('success') and result.get('error'):
+                print(f"⚠️ Enhanced method failed, trying stealth mode: {result.get('error')}")
+                # Try stealth mode if enhanced fails
+                result = youtube_session.extract_video_info(url, use_stealth=True)
             
-            # Clean up temp directory
-            cleanup_temp_dir(temp_cache_dir)
-            
-            # If first attempt fails, try fallback method
-            if result.returncode != 0:
-                print(f"Primary method failed, trying fallback: {result.stderr}")
+            if result.get('success'):
+                video_info = result['data']
+                formats = video_info.get('formats', [])
                 
-                fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                # Filter and process formats
+                filtered_formats = []
+                for format_data in formats:
+                    if format_data.get('url') and format_data.get('format_id'):
+                        filtered_formats.append({
+                            'format_id': format_data.get('format_id'),
+                            'ext': format_data.get('ext'),
+                            'resolution': format_data.get('resolution'),
+                            'format_note': format_data.get('format_note'),
+                            'filesize': format_data.get('filesize'),
+                            'vcodec': format_data.get('vcodec'),
+                            'acodec': format_data.get('acodec'),
+                            'fps': format_data.get('fps'),
+                            'quality': format_data.get('quality')
+                        })
                 
-                fallback_cmd = [
-                    sys.executable, '-m', 'yt_dlp',
-                    '--dump-json',
-                    '--no-download',
-                    *fallback_options,
-                    url
-                ]
+                # Sort by quality
+                filtered_formats.sort(key=lambda x: x.get('quality', 0) or 0, reverse=True)
                 
-                result = subprocess.run(
-                    fallback_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    env={**os.environ, 'HOME': '/tmp'}
+                # Extract video metadata
+                video_metadata = {
+                    'title': video_info.get('title', 'Unknown Title'),
+                    'description': video_info.get('description', ''),
+                    'duration': video_info.get('duration', 0),
+                    'uploader': video_info.get('uploader') or video_info.get('channel', 'Unknown'),
+                    'upload_date': video_info.get('upload_date', ''),
+                    'view_count': video_info.get('view_count', 0),
+                    'like_count': video_info.get('like_count', 0),
+                    'thumbnail': video_info.get('thumbnail', ''),
+                    'channel': video_info.get('channel') or video_info.get('uploader', 'Unknown'),
+                    'channel_id': video_info.get('channel_id') or video_info.get('uploader_id', ''),
+                    'webpage_url': video_info.get('webpage_url', url),
+                    'id': video_info.get('id', ''),
+                    'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title')
+                }
+                
+                print(f"✅ Successfully extracted {len(filtered_formats)} formats for: {video_metadata['title']}")
+                
+                response = jsonify({
+                    'videoInfo': video_metadata,
+                    'formats': filtered_formats,
+                    'extraction_method': 'advanced_tls_fingerprinting',
+                    'tls_fingerprint': result.get('tls_fingerprint', 'unknown')
+                })
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+            else:
+                # Format error message for user
+                error_details = format_error_message(
+                    result.get('error', ''),
+                    technical_details=result
                 )
                 
-                cleanup_temp_dir(fallback_temp_dir)
-            
-            if result.returncode != 0:
-                error_msg = result.stderr.strip()
-                
-                # Provide more helpful error messages
-                if "Sign in to confirm you're not a bot" in error_msg:
-                    response = jsonify({
-                        'error': 'YouTube is blocking automated access. This video may require authentication or may be age-restricted. Please try a different video or try again later.',
-                        'technical_error': error_msg
-                    })
-                elif "Video unavailable" in error_msg:
-                    response = jsonify({
-                        'error': 'This video is not available. It may be private, deleted, or restricted in your region.',
-                        'technical_error': error_msg
-                    })
-                elif "age-restricted" in error_msg.lower():
-                    response = jsonify({
-                        'error': 'This video is age-restricted and cannot be accessed without authentication.',
-                        'technical_error': error_msg
-                    })
-                else:
-                    response = jsonify({
-                        'error': f'Failed to fetch video information: {error_msg}',
-                        'technical_error': error_msg
-                    })
-                
+                response = jsonify(error_details)
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
-            
-            # Parse the JSON output
-            video_info = json.loads(result.stdout.strip())
-            formats = video_info.get('formats', [])
-            
-            # Filter and process formats
-            filtered_formats = []
-            for format_data in formats:
-                if format_data.get('url') and format_data.get('format_id'):
-                    filtered_formats.append({
-                        'format_id': format_data.get('format_id'),
-                        'ext': format_data.get('ext'),
-                        'resolution': format_data.get('resolution'),
-                        'format_note': format_data.get('format_note'),
-                        'filesize': format_data.get('filesize'),
-                        'vcodec': format_data.get('vcodec'),
-                        'acodec': format_data.get('acodec'),
-                        'fps': format_data.get('fps'),
-                        'quality': format_data.get('quality')
-                    })
-            
-            # Sort by quality
-            filtered_formats.sort(key=lambda x: x.get('quality', 0) or 0, reverse=True)
-            
-            # Extract video metadata
-            video_metadata = {
-                'title': video_info.get('title', 'Unknown Title'),
-                'description': video_info.get('description', ''),
-                'duration': video_info.get('duration', 0),
-                'uploader': video_info.get('uploader') or video_info.get('channel', 'Unknown'),
-                'upload_date': video_info.get('upload_date', ''),
-                'view_count': video_info.get('view_count', 0),
-                'like_count': video_info.get('like_count', 0),
-                'thumbnail': video_info.get('thumbnail', ''),
-                'channel': video_info.get('channel') or video_info.get('uploader', 'Unknown'),
-                'channel_id': video_info.get('channel_id') or video_info.get('uploader_id', ''),
-                'webpage_url': video_info.get('webpage_url', url),
-                'id': video_info.get('id', ''),
-                'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title')
-            }
-            
-            response = jsonify({
-                'videoInfo': video_metadata,
-                'formats': filtered_formats
-            })
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-            
-        except subprocess.TimeoutExpired:
-            response = jsonify({'error': 'Request timeout - video processing took too long'})
-            response.status_code = 500
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-        except json.JSONDecodeError:
-            response = jsonify({'error': 'Failed to parse video information'})
-            response.status_code = 500
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
+                
         except Exception as e:
-            response = jsonify({'error': f'Processing error: {str(e)}'})
+            print(f"❌ TLS extraction failed with exception: {str(e)}")
+            error_details = format_error_message(
+                str(e),
+                technical_details=f"TLS extraction exception: {str(e)}"
+            )
+            response = jsonify(error_details)
             response.status_code = 500
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
@@ -330,97 +251,70 @@ def get_direct_url():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Run yt-dlp to get direct URL with enhanced bot detection avoidance
+        # Use advanced TLS client session for direct URL extraction
         try:
-            # First attempt with enhanced options (including cookies)
-            base_options, temp_cache_dir = get_ytdlp_base_options(url)
+            print(f"🔗 Getting direct URL with advanced TLS fingerprinting: {url} (format: {format_id})")
+            youtube_session = get_youtube_session()
             
-            cmd = [
-                sys.executable, '-m', 'yt_dlp',
-                '-g',  # Get URL only
-                '-f', format_id,
-                *base_options,
-                url
-            ]
+            # First attempt with enhanced TLS fingerprinting
+            result = youtube_session.get_direct_url(url, format_id, use_stealth=False)
             
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,  # Increased timeout
-                env={**os.environ, 'HOME': '/tmp'}
-            )
+            if not result.get('success') and result.get('error'):
+                print(f"⚠️ Enhanced direct URL method failed, trying stealth mode: {result.get('error')}")
+                # Try stealth mode if enhanced fails
+                result = youtube_session.get_direct_url(url, format_id, use_stealth=True)
             
-            # Clean up temp directory
-            cleanup_temp_dir(temp_cache_dir)
-            
-            # If first attempt fails, try fallback method
-            if result.returncode != 0:
-                print(f"Primary method failed for direct URL, trying fallback: {result.stderr}")
+            if result.get('success'):
+                print(f"✅ Successfully obtained direct URL for format {format_id}")
+                response = jsonify({
+                    'directUrl': result['direct_url'],
+                    'extraction_method': 'advanced_tls_fingerprinting',
+                    'tls_fingerprint': result.get('tls_fingerprint', 'unknown')
+                })
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+            else:
+                # Format error message for direct URL failures
+                error_msg = result.get('error', '').lower()
                 
-                fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
-                
-                fallback_cmd = [
-                    sys.executable, '-m', 'yt_dlp',
-                    '-g',  # Get URL only
-                    '-f', format_id,
-                    *fallback_options,
-                    url
-                ]
-                
-                result = subprocess.run(
-                    fallback_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    env={**os.environ, 'HOME': '/tmp'}
-                )
-                
-                cleanup_temp_dir(fallback_temp_dir)
-            
-            if result.returncode != 0:
-                error_msg = result.stderr.strip()
-                
-                # Provide more helpful error messages
-                if "Sign in to confirm you're not a bot" in error_msg:
-                    response = jsonify({
-                        'error': 'YouTube is blocking automated access. Please try a different video or try again later.',
-                        'technical_error': error_msg
-                    })
-                elif "No video formats found" in error_msg or "format not available" in error_msg.lower():
-                    response = jsonify({
-                        'error': f'The requested format ({format_id}) is not available for this video. Please try a different format.',
-                        'technical_error': error_msg
-                    })
+                if "no video formats found" in error_msg or "format not available" in error_msg:
+                    error_details = {
+                        'error': f'The requested format ({format_id}) is not available for this video.',
+                        'suggestions': [
+                            'Try a different format from the formats list',
+                            'Check if the video is still available',
+                            'Refresh the formats list and try again'
+                        ],
+                        'technical_error': result
+                    }
+                elif "sign in to confirm you're not a bot" in error_msg:
+                    error_details = {
+                        'error': 'YouTube is blocking direct URL access. Authentication may be required.',
+                        'suggestions': [
+                            'Try a different format',
+                            'Wait a few minutes before retrying',
+                            'Ensure Chrome is logged into YouTube'
+                        ],
+                        'technical_error': result
+                    }
                 else:
-                    response = jsonify({
-                        'error': f'Failed to get direct URL: {error_msg}',
-                        'technical_error': error_msg
-                    })
+                    error_details = format_error_message(
+                        result.get('error', ''),
+                        technical_details=result
+                    )
                 
+                response = jsonify(error_details)
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
-            
-            direct_url = result.stdout.strip()
-            
-            if not direct_url:
-                response = jsonify({'error': 'No direct URL found'})
-                response.status_code = 500
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
-            
-            response = jsonify({'directUrl': direct_url})
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-            
-        except subprocess.TimeoutExpired:
-            response = jsonify({'error': 'Request timeout'})
-            response.status_code = 500
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
+                
         except Exception as e:
-            response = jsonify({'error': f'Processing error: {str(e)}'})
+            print(f"❌ TLS direct URL extraction failed with exception: {str(e)}")
+            error_details = format_error_message(
+                str(e),
+                technical_details=f"TLS direct URL exception: {str(e)}"
+            )
+            response = jsonify(error_details)
             response.status_code = 500
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
@@ -447,39 +341,119 @@ def cookie_info():
         return response
     
     cookie_info = {
-        'message': 'Cookie Authentication Information',
-        'description': 'If you encounter bot detection errors, you may need to provide cookies from your browser.',
-        'methods': {
-            'automatic': {
-                'description': 'The API automatically tries to extract cookies from Chrome browser if available',
-                'note': 'This works if you have Chrome installed and are logged into YouTube'
+        'message': 'Advanced TLS Fingerprinting & Cookie Authentication',
+        'description': 'This API uses advanced TLS client fingerprinting to bypass bot detection, with automatic cookie support.',
+        'features': {
+            'tls_fingerprinting': {
+                'description': 'Uses real browser TLS fingerprints (Chrome, Firefox, Safari, Opera)',
+                'benefits': ['Better bot detection avoidance', 'Randomized TLS extensions', 'Authentic browser behavior simulation']
             },
-            'manual': {
-                'description': 'You can manually export cookies using browser extensions',
-                'extensions': {
-                    'chrome': 'Get cookies.txt LOCALLY - Available in Chrome Web Store',
-                    'firefox': 'cookies.txt - Available in Firefox Add-ons'
-                },
-                'steps': [
-                    '1. Install a cookie export extension',
-                    '2. Visit YouTube and log in',
-                    '3. Export cookies for youtube.com',
-                    '4. Save the cookies.txt file',
-                    '5. Contact the API administrator to configure cookie support'
-                ]
+            'automatic_cookies': {
+                'description': 'Automatically extracts cookies from your Chrome browser',
+                'note': 'Works if you have Chrome installed and are logged into YouTube'
+            },
+            'stealth_mode': {
+                'description': 'Ultra-stealth mode with additional geo-bypass and randomization',
+                'triggers': ['When standard method fails', 'For problematic videos', 'Age-restricted content']
             }
+        },
+        'manual_cookies': {
+            'description': 'You can manually export cookies using browser extensions',
+            'extensions': {
+                'chrome': 'Get cookies.txt LOCALLY - Available in Chrome Web Store',
+                'firefox': 'cookies.txt - Available in Firefox Add-ons'
+            },
+            'steps': [
+                '1. Install a cookie export extension',
+                '2. Visit YouTube and log in',
+                '3. Export cookies for youtube.com',
+                '4. Save the cookies.txt file',
+                '5. Contact the API administrator to configure cookie support'
+            ]
         },
         'privacy_note': 'Cookies contain your authentication information. Only use trusted extensions and never share cookie files.',
         'troubleshooting': {
-            'bot_detection': 'If you see "Sign in to confirm you\'re not a bot", try using a different video or wait before retrying',
-            'age_restricted': 'Age-restricted videos require authentication and may not work without proper cookies',
-            'private_videos': 'Private or unlisted videos require authentication from the video owner\'s account'
+            'bot_detection': 'The TLS fingerprinting significantly reduces bot detection. If you still see errors, try waiting or using a different video.',
+            'age_restricted': 'Age-restricted videos work better with proper Chrome login and cookie extraction',
+            'private_videos': 'Private videos require authentication from the video owner\'s account',
+            'connection_test': 'Use /api/test-connection to verify TLS fingerprinting is working'
         }
     }
     
     response = jsonify(cookie_info)
     response.headers.add('Access-Control-Allow-Origin', '*')
     return response
+
+# TLS connection test endpoint
+@app.route('/api/test-connection', methods=['GET', 'OPTIONS'])
+def test_connection():
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response
+    
+    try:
+        print("🧪 Testing TLS connection to YouTube...")
+        youtube_session = get_youtube_session()
+        
+        # Test the TLS connection
+        connection_result = youtube_session.test_connection()
+        
+        if connection_result.get('success'):
+            test_result = {
+                'status': 'success',
+                'message': 'TLS fingerprinting is working correctly',
+                'connection_details': {
+                    'tls_fingerprint': connection_result.get('tls_fingerprint'),
+                    'user_agent': connection_result.get('user_agent'),
+                    'status_code': connection_result.get('status_code'),
+                    'response_size': connection_result.get('response_size')
+                },
+                'capabilities': {
+                    'tls_client': 'Available',
+                    'fake_useragent': 'Available',
+                    'cookie_extraction': 'Automatic (Chrome)',
+                    'stealth_mode': 'Available'
+                }
+            }
+            print(f"✅ TLS test successful with fingerprint: {connection_result.get('tls_fingerprint')}")
+        else:
+            test_result = {
+                'status': 'error',
+                'message': 'TLS connection test failed',
+                'error': connection_result.get('error'),
+                'tls_fingerprint': connection_result.get('tls_fingerprint'),
+                'troubleshooting': [
+                    'Check internet connection',
+                    'Verify tls-client package is installed',
+                    'Try again in a few minutes'
+                ]
+            }
+            print(f"❌ TLS test failed: {connection_result.get('error')}")
+        
+        response = jsonify(test_result)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+        
+    except Exception as e:
+        print(f"❌ TLS test exception: {str(e)}")
+        error_result = {
+            'status': 'error',
+            'message': 'TLS test failed with exception',
+            'error': str(e),
+            'troubleshooting': [
+                'Install required packages: pip install tls-client fake-useragent',
+                'Check if dependencies are properly installed',
+                'Verify Python environment'
+            ]
+        }
+        
+        response = jsonify(error_result)
+        response.status_code = 500
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
 # Catch-all route to handle other API requests
 @app.route('/api/<path:path>', methods=['GET', 'POST', 'OPTIONS'])
