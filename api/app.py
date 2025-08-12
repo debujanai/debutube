@@ -5,6 +5,8 @@ import json
 import os
 import tempfile
 import random
+import shutil
+from pathlib import Path
 
 app = Flask(__name__)
 
@@ -16,7 +18,7 @@ USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 ]
 
-def get_ytdlp_base_options(url):
+def get_ytdlp_base_options(url, use_cookies=True):
     """Get base yt-dlp options optimized for Vercel serverless environment"""
     temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
     user_agent = random.choice(USER_AGENTS)
@@ -32,6 +34,14 @@ def get_ytdlp_base_options(url):
         '--socket-timeout', '30',
         '--no-check-certificate',  # Skip SSL verification issues
     ]
+    
+    # Add cookie support to bypass bot detection
+    if use_cookies:
+        # Try to use cookies from browser (Chrome first, then Firefox, then Edge)
+        cookie_options = [
+            '--cookies-from-browser', 'chrome',
+        ]
+        base_options.extend(cookie_options)
     
     return base_options, temp_cache_dir
 
@@ -56,6 +66,7 @@ def get_formats():
     try:
         data = request.get_json()
         url = data.get('url') if data else None
+        use_cookies = data.get('useCookies', True) if data else True  # Default to True
         
         if not url:
             response = jsonify({'error': 'URL is required'})
@@ -73,7 +84,7 @@ def get_formats():
         
         # Run yt-dlp to get video information with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url)
+            base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -87,7 +98,7 @@ def get_formats():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=45,  # Increased timeout for cookie processing
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
@@ -95,6 +106,10 @@ def get_formats():
             cleanup_temp_dir(temp_cache_dir)
             
             if result.returncode != 0:
+                # If cookies failed, try without cookies as fallback
+                if use_cookies and 'Sign in to confirm' in result.stderr:
+                    return retry_without_cookies(url, 'formats')
+                
                 response = jsonify({'error': f'yt-dlp failed: {result.stderr}'})
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
@@ -169,6 +184,106 @@ def get_formats():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
+def retry_without_cookies(url, endpoint_type):
+    """Retry the request without cookies as a fallback"""
+    try:
+        base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies=False)
+        
+        if endpoint_type == 'formats':
+            cmd = [
+                sys.executable, '-m', 'yt_dlp',
+                '--dump-json',
+                '--no-download',
+                *base_options,
+                url
+            ]
+        else:  # direct-url
+            format_id = request.get_json().get('formatId')
+            cmd = [
+                sys.executable, '-m', 'yt_dlp',
+                '-g',
+                '-f', format_id,
+                *base_options,
+                url
+            ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, 'HOME': '/tmp'}
+        )
+        
+        cleanup_temp_dir(temp_cache_dir)
+        
+        if result.returncode != 0:
+            response = jsonify({
+                'error': f'yt-dlp failed even without cookies: {result.stderr}',
+                'suggestion': 'This video may require manual cookie authentication. Please try using a different video or check if the video is publicly accessible.'
+            })
+            response.status_code = 500
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response
+        
+        if endpoint_type == 'formats':
+            video_info = json.loads(result.stdout.strip())
+            formats = video_info.get('formats', [])
+            
+            filtered_formats = []
+            for format_data in formats:
+                if format_data.get('url') and format_data.get('format_id'):
+                    filtered_formats.append({
+                        'format_id': format_data.get('format_id'),
+                        'ext': format_data.get('ext'),
+                        'resolution': format_data.get('resolution'),
+                        'format_note': format_data.get('format_note'),
+                        'filesize': format_data.get('filesize'),
+                        'vcodec': format_data.get('vcodec'),
+                        'acodec': format_data.get('acodec'),
+                        'fps': format_data.get('fps'),
+                        'quality': format_data.get('quality')
+                    })
+            
+            filtered_formats.sort(key=lambda x: x.get('quality', 0) or 0, reverse=True)
+            
+            video_metadata = {
+                'title': video_info.get('title', 'Unknown Title'),
+                'description': video_info.get('description', ''),
+                'duration': video_info.get('duration', 0),
+                'uploader': video_info.get('uploader') or video_info.get('channel', 'Unknown'),
+                'upload_date': video_info.get('upload_date', ''),
+                'view_count': video_info.get('view_count', 0),
+                'like_count': video_info.get('like_count', 0),
+                'thumbnail': video_info.get('thumbnail', ''),
+                'channel': video_info.get('channel') or video_info.get('uploader', 'Unknown'),
+                'channel_id': video_info.get('channel_id') or video_info.get('uploader_id', ''),
+                'webpage_url': video_info.get('webpage_url', url),
+                'id': video_info.get('id', ''),
+                'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title')
+            }
+            
+            response = jsonify({
+                'videoInfo': video_metadata,
+                'formats': filtered_formats,
+                'warning': 'Retrieved without cookies - some content may be limited'
+            })
+        else:  # direct-url
+            direct_url = result.stdout.strip()
+            response = jsonify({
+                'directUrl': direct_url,
+                'warning': 'Retrieved without cookies - some content may be limited'
+            })
+        
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+        
+    except Exception as e:
+        response = jsonify({'error': f'Fallback processing error: {str(e)}'})
+        response.status_code = 500
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
 @app.route('/api/direct-url', methods=['POST', 'OPTIONS'])
 def get_direct_url():
     # Handle CORS preflight
@@ -183,6 +298,7 @@ def get_direct_url():
         data = request.get_json()
         url = data.get('url') if data else None
         format_id = data.get('formatId') if data else None
+        use_cookies = data.get('useCookies', True) if data else True  # Default to True
         
         if not url or not format_id:
             response = jsonify({'error': 'URL and formatId are required'})
@@ -192,7 +308,7 @@ def get_direct_url():
         
         # Run yt-dlp to get direct URL with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url)
+            base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -206,7 +322,7 @@ def get_direct_url():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=45,  # Increased timeout for cookie processing
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
@@ -214,6 +330,10 @@ def get_direct_url():
             cleanup_temp_dir(temp_cache_dir)
             
             if result.returncode != 0:
+                # If cookies failed, try without cookies as fallback
+                if use_cookies and 'Sign in to confirm' in result.stderr:
+                    return retry_without_cookies(url, 'direct-url')
+                
                 response = jsonify({'error': f'Failed to get direct URL: {result.stderr}'})
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
@@ -244,6 +364,59 @@ def get_direct_url():
             
     except Exception as e:
         response = jsonify({'error': f'Server error: {str(e)}'})
+        response.status_code = 500
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+# New endpoint to check available browsers for cookie extraction
+@app.route('/api/cookie-browsers', methods=['GET', 'OPTIONS'])
+def get_cookie_browsers():
+    """Get list of available browsers for cookie extraction"""
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response
+    
+    try:
+        # Test which browsers are available for cookie extraction
+        available_browsers = []
+        browsers_to_test = ['chrome', 'firefox', 'edge', 'safari', 'opera']
+        
+        for browser in browsers_to_test:
+            try:
+                # Test if browser cookies can be accessed
+                cmd = [
+                    sys.executable, '-m', 'yt_dlp',
+                    '--cookies-from-browser', browser,
+                    '--simulate',
+                    '--quiet',
+                    'https://www.youtube.com/watch?v=dQw4w9WgXcQ'  # Test video
+                ]
+                
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    env={**os.environ, 'HOME': '/tmp'}
+                )
+                
+                if result.returncode == 0:
+                    available_browsers.append(browser)
+            except:
+                continue
+        
+        response = jsonify({
+            'availableBrowsers': available_browsers,
+            'recommendation': 'chrome' if 'chrome' in available_browsers else available_browsers[0] if available_browsers else None
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+        
+    except Exception as e:
+        response = jsonify({'error': f'Error checking browsers: {str(e)}'})
         response.status_code = 500
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
