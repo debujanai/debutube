@@ -995,7 +995,7 @@ export default function Home() {
           {/* Footer */}
           <div className="text-center mt-16">
             <p className="text-sm opacity-80 font-medium" style={{ color: colors.textMuted, fontFamily: 'Inter, sans-serif' }}>
-              DebuTube - Professional YouTube Downloader
+              DebuTube by Debu
             </p>
           </div>
         </div>
