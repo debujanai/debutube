@@ -2,8 +2,46 @@ from flask import Flask, request, jsonify
 import subprocess
 import sys
 import json
+import os
+import tempfile
+import random
 
 app = Flask(__name__)
+
+# User agents to rotate for better bot detection avoidance
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+]
+
+def get_ytdlp_base_options(url):
+    """Get base yt-dlp options optimized for Vercel serverless environment"""
+    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
+    user_agent = random.choice(USER_AGENTS)
+    
+    base_options = [
+        '--no-cache-dir',  # Disable cache completely
+        '--cache-dir', temp_cache_dir,  # Use temp directory for any cache needs
+        '--user-agent', user_agent,
+        '--referer', 'https://www.youtube.com/',
+        '--extractor-retries', '3',
+        '--fragment-retries', '3',
+        '--retry-sleep', '1',
+        '--socket-timeout', '30',
+        '--no-check-certificate',  # Skip SSL verification issues
+    ]
+    
+    return base_options, temp_cache_dir
+
+def cleanup_temp_dir(temp_dir):
+    """Clean up temporary directory"""
+    try:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    except:
+        pass
 
 @app.route('/api/formats', methods=['POST', 'OPTIONS'])
 def get_formats():
@@ -33,14 +71,28 @@ def get_formats():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Run yt-dlp to get video information
+        # Run yt-dlp to get video information with Vercel-compatible options
         try:
+            base_options, temp_cache_dir = get_ytdlp_base_options(url)
+            
+            cmd = [
+                sys.executable, '-m', 'yt_dlp',
+                '--dump-json',
+                '--no-download',
+                *base_options,
+                url
+            ]
+            
             result = subprocess.run(
-                [sys.executable, '-m', 'yt_dlp', '--dump-json', '--no-download', url],
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
+            
+            # Clean up temp directory
+            cleanup_temp_dir(temp_cache_dir)
             
             if result.returncode != 0:
                 response = jsonify({'error': f'yt-dlp failed: {result.stderr}'})
@@ -138,14 +190,28 @@ def get_direct_url():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Run yt-dlp to get direct URL
+        # Run yt-dlp to get direct URL with Vercel-compatible options
         try:
+            base_options, temp_cache_dir = get_ytdlp_base_options(url)
+            
+            cmd = [
+                sys.executable, '-m', 'yt_dlp',
+                '-g',  # Get URL only
+                '-f', format_id,
+                *base_options,
+                url
+            ]
+            
             result = subprocess.run(
-                [sys.executable, '-m', 'yt_dlp', '-g', '-f', format_id, url],
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
+            
+            # Clean up temp directory
+            cleanup_temp_dir(temp_cache_dir)
             
             if result.returncode != 0:
                 response = jsonify({'error': f'Failed to get direct URL: {result.stderr}'})
