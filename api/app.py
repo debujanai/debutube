@@ -5,93 +5,124 @@ import json
 import os
 import tempfile
 import random
+import time
+from datetime import datetime
 
 app = Flask(__name__)
 
-# User agents to rotate for better bot detection avoidance
+# Enhanced user agents with more realistic browser fingerprints
 USER_AGENTS = [
+    # Chrome on Windows
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    
+    # Chrome on macOS
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    
+    # Firefox on Windows
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    
+    # Safari on macOS
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    
+    # Edge on Windows
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
 ]
 
+# Additional headers to make requests look more legitimate
+BROWSER_HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'DNT': '1',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0',
+}
+
 def get_ytdlp_base_options(url):
-    """Get base yt-dlp options optimized for Vercel serverless environment"""
+    """Get enhanced yt-dlp options with better bot detection avoidance"""
     temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
     user_agent = random.choice(USER_AGENTS)
+    
+    # Add random delay to avoid rate limiting
+    time.sleep(random.uniform(0.5, 2.0))
     
     base_options = [
         '--no-cache-dir',  # Disable cache completely
         '--cache-dir', temp_cache_dir,  # Use temp directory for any cache needs
         '--user-agent', user_agent,
         '--referer', 'https://www.youtube.com/',
-        '--extractor-retries', '3',
-        '--fragment-retries', '3',
-        '--retry-sleep', '1',
-        '--socket-timeout', '30',
-        '--no-check-certificate',  # Skip SSL verification issues
-        # Bot detection avoidance options (without cookies first)
+        
+        # Enhanced anti-bot detection
+        '--add-header', f'Accept:{BROWSER_HEADERS["Accept"]}',
+        '--add-header', f'Accept-Language:{BROWSER_HEADERS["Accept-Language"]}',
+        '--add-header', f'Accept-Encoding:{BROWSER_HEADERS["Accept-Encoding"]}',
+        '--add-header', f'DNT:{BROWSER_HEADERS["DNT"]}',
+        '--add-header', f'Upgrade-Insecure-Requests:{BROWSER_HEADERS["Upgrade-Insecure-Requests"]}',
+        '--add-header', f'Sec-Fetch-Dest:{BROWSER_HEADERS["Sec-Fetch-Dest"]}',
+        '--add-header', f'Sec-Fetch-Mode:{BROWSER_HEADERS["Sec-Fetch-Mode"]}',
+        '--add-header', f'Sec-Fetch-Site:{BROWSER_HEADERS["Sec-Fetch-Site"]}',
+        '--add-header', f'Cache-Control:{BROWSER_HEADERS["Cache-Control"]}',
+        
+        # Network and retry settings
+        '--extractor-retries', '5',  # Increased retries
+        '--fragment-retries', '5',
+        '--retry-sleep', 'linear=2:10:1',  # Progressive backoff
+        '--socket-timeout', '60',  # Increased timeout
+        '--no-check-certificate',
+        
+        # Additional YouTube-specific options
+        '--force-ipv4',  # Force IPv4 to avoid potential IPv6 issues
         '--sleep-interval', '1',  # Sleep between requests
-        '--max-sleep-interval', '3',  # Max sleep interval
-        '--sleep-requests', '1',  # Sleep every N requests
-        # Additional anti-bot measures
-        '--extractor-args', 'youtube:player_client=web,mweb',  # Use web client
-        '--extractor-args', 'youtube:skip=hls,dash',  # Skip some formats that might trigger detection
-        '--no-warnings',  # Suppress warnings
+        '--max-sleep-interval', '5',
+        
+        # Cookie handling - try to extract from browser if available
+        '--cookies-from-browser', 'chrome',  # Try Chrome first
+        '--ignore-errors',  # Continue on cookie extraction errors
     ]
     
     return base_options, temp_cache_dir
 
-def get_ytdlp_with_cookies_options(url):
-    """Get yt-dlp options with cookie extraction (fallback method)"""
-    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cookies_cache_')
-    user_agent = random.choice(USER_AGENTS)
-    
-    cookie_options = [
-        '--no-cache-dir',
-        '--cache-dir', temp_cache_dir,
-        '--user-agent', user_agent,
-        '--referer', 'https://www.youtube.com/',
-        '--extractor-retries', '2',  # Fewer retries for cookie method
-        '--fragment-retries', '2',
-        '--retry-sleep', '1',
-        '--socket-timeout', '30',
-        '--no-check-certificate',
-        # Try to use browser cookies
-        '--cookies-from-browser', 'chrome',
-        '--sleep-interval', '1',
-        '--max-sleep-interval', '3',
-        '--sleep-requests', '1',
-        '--extractor-args', 'youtube:player_client=web',
-        '--no-warnings',
-    ]
-    
-    return cookie_options, temp_cache_dir
-
 def get_ytdlp_fallback_options(url):
-    """Get fallback yt-dlp options when cookies fail"""
-    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_fallback_cache_')
+    """Fallback options when cookie extraction fails"""
+    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_fallback_')
     user_agent = random.choice(USER_AGENTS)
+    
+    time.sleep(random.uniform(1.0, 3.0))  # Longer delay for fallback
     
     fallback_options = [
         '--no-cache-dir',
         '--cache-dir', temp_cache_dir,
         '--user-agent', user_agent,
         '--referer', 'https://www.youtube.com/',
-        '--extractor-retries', '5',  # More retries for fallback
-        '--fragment-retries', '5',
-        '--retry-sleep', '2',  # Longer sleep
-        '--socket-timeout', '45',  # Longer timeout
+        
+        # More aggressive headers
+        '--add-header', f'Accept:{BROWSER_HEADERS["Accept"]}',
+        '--add-header', f'Accept-Language:{BROWSER_HEADERS["Accept-Language"]}',
+        '--add-header', 'X-Forwarded-For:8.8.8.8',  # Use Google DNS IP
+        
+        # Bypass some restrictions
+        '--geo-bypass',
+        '--geo-bypass-country', 'US',
+        
+        # Alternative extraction method
+        '--youtube-skip-dash-manifest',
+        '--no-warnings',
+        
+        # Network settings
+        '--extractor-retries', '3',
+        '--fragment-retries', '3',
+        '--retry-sleep', '5',
+        '--socket-timeout', '30',
         '--no-check-certificate',
-        # More aggressive anti-detection
-        '--sleep-interval', '2',
-        '--max-sleep-interval', '5',
-        '--sleep-requests', '1',
-        '--extractor-args', 'youtube:player_client=web',
-        '--extractor-args', 'youtube:skip=dash',  # Skip DASH formats
-        # Try different approach without cookies
-        '--no-warnings',  # Suppress warnings
+        '--force-ipv4',
     ]
     
     return fallback_options, temp_cache_dir
@@ -132,8 +163,9 @@ def get_formats():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Run yt-dlp to get video information with Vercel-compatible options
+        # Run yt-dlp to get video information with enhanced bot detection avoidance
         try:
+            # First attempt with enhanced options (including cookies)
             base_options, temp_cache_dir = get_ytdlp_base_options(url)
             
             cmd = [
@@ -148,88 +180,62 @@ def get_formats():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
-                env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
+                timeout=60,  # Increased timeout
+                env={**os.environ, 'HOME': '/tmp'}
             )
             
             # Clean up temp directory
             cleanup_temp_dir(temp_cache_dir)
             
-            # If primary method fails with bot detection, try cookies first, then fallback
-            if result.returncode != 0 and ('Sign in to confirm' in result.stderr or 'bot' in result.stderr.lower()):
-                print("Primary method failed with bot detection, trying cookies...")
+            # If first attempt fails, try fallback method
+            if result.returncode != 0:
+                print(f"Primary method failed, trying fallback: {result.stderr}")
                 
-                # Try with cookies first
-                try:
-                    cookie_options, cookie_temp_dir = get_ytdlp_with_cookies_options(url)
-                    
-                    cookie_cmd = [
-                        sys.executable, '-m', 'yt_dlp',
-                        '--dump-json',
-                        '--no-download',
-                        *cookie_options,
-                        url
-                    ]
-                    
-                    result = subprocess.run(
-                        cookie_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        env={**os.environ, 'HOME': '/tmp'}
-                    )
-                    
-                    cleanup_temp_dir(cookie_temp_dir)
-                    
-                    # If cookies also fail, try final fallback
-                    if result.returncode != 0:
-                        print("Cookie method also failed, trying final fallback...")
-                        
-                        fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
-                        
-                        fallback_cmd = [
-                            sys.executable, '-m', 'yt_dlp',
-                            '--dump-json',
-                            '--no-download',
-                            *fallback_options,
-                            url
-                        ]
-                        
-                        result = subprocess.run(
-                            fallback_cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=45,  # Longer timeout for fallback
-                            env={**os.environ, 'HOME': '/tmp'}
-                        )
-                        
-                        cleanup_temp_dir(fallback_temp_dir)
-                        
-                except Exception as e:
-                    print(f"Cookie method error: {e}, trying final fallback...")
-                    
-                    fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
-                    
-                    fallback_cmd = [
-                        sys.executable, '-m', 'yt_dlp',
-                        '--dump-json',
-                        '--no-download',
-                        *fallback_options,
-                        url
-                    ]
-                    
-                    result = subprocess.run(
-                        fallback_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=45,
-                        env={**os.environ, 'HOME': '/tmp'}
-                    )
-                    
-                    cleanup_temp_dir(fallback_temp_dir)
+                fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                
+                fallback_cmd = [
+                    sys.executable, '-m', 'yt_dlp',
+                    '--dump-json',
+                    '--no-download',
+                    *fallback_options,
+                    url
+                ]
+                
+                result = subprocess.run(
+                    fallback_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env={**os.environ, 'HOME': '/tmp'}
+                )
+                
+                cleanup_temp_dir(fallback_temp_dir)
             
             if result.returncode != 0:
-                response = jsonify({'error': f'yt-dlp failed: {result.stderr}'})
+                error_msg = result.stderr.strip()
+                
+                # Provide more helpful error messages
+                if "Sign in to confirm you're not a bot" in error_msg:
+                    response = jsonify({
+                        'error': 'YouTube is blocking automated access. This video may require authentication or may be age-restricted. Please try a different video or try again later.',
+                        'technical_error': error_msg
+                    })
+                elif "Video unavailable" in error_msg:
+                    response = jsonify({
+                        'error': 'This video is not available. It may be private, deleted, or restricted in your region.',
+                        'technical_error': error_msg
+                    })
+                elif "age-restricted" in error_msg.lower():
+                    response = jsonify({
+                        'error': 'This video is age-restricted and cannot be accessed without authentication.',
+                        'technical_error': error_msg
+                    })
+                else:
+                    response = jsonify({
+                        'error': f'Failed to fetch video information: {error_msg}',
+                        'technical_error': error_msg
+                    })
+                
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
@@ -324,8 +330,9 @@ def get_direct_url():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Run yt-dlp to get direct URL with Vercel-compatible options
+        # Run yt-dlp to get direct URL with enhanced bot detection avoidance
         try:
+            # First attempt with enhanced options (including cookies)
             base_options, temp_cache_dir = get_ytdlp_base_options(url)
             
             cmd = [
@@ -340,88 +347,57 @@ def get_direct_url():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
-                env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
+                timeout=60,  # Increased timeout
+                env={**os.environ, 'HOME': '/tmp'}
             )
             
             # Clean up temp directory
             cleanup_temp_dir(temp_cache_dir)
             
-            # If primary method fails with bot detection, try cookies first, then fallback
-            if result.returncode != 0 and ('Sign in to confirm' in result.stderr or 'bot' in result.stderr.lower()):
-                print("Primary method failed with bot detection, trying cookies...")
+            # If first attempt fails, try fallback method
+            if result.returncode != 0:
+                print(f"Primary method failed for direct URL, trying fallback: {result.stderr}")
                 
-                # Try with cookies first
-                try:
-                    cookie_options, cookie_temp_dir = get_ytdlp_with_cookies_options(url)
-                    
-                    cookie_cmd = [
-                        sys.executable, '-m', 'yt_dlp',
-                        '-g',  # Get URL only
-                        '-f', format_id,
-                        *cookie_options,
-                        url
-                    ]
-                    
-                    result = subprocess.run(
-                        cookie_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        env={**os.environ, 'HOME': '/tmp'}
-                    )
-                    
-                    cleanup_temp_dir(cookie_temp_dir)
-                    
-                    # If cookies also fail, try final fallback
-                    if result.returncode != 0:
-                        print("Cookie method also failed, trying final fallback...")
-                        
-                        fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
-                        
-                        fallback_cmd = [
-                            sys.executable, '-m', 'yt_dlp',
-                            '-g',  # Get URL only
-                            '-f', format_id,
-                            *fallback_options,
-                            url
-                        ]
-                        
-                        result = subprocess.run(
-                            fallback_cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=45,  # Longer timeout for fallback
-                            env={**os.environ, 'HOME': '/tmp'}
-                        )
-                        
-                        cleanup_temp_dir(fallback_temp_dir)
-                        
-                except Exception as e:
-                    print(f"Cookie method error: {e}, trying final fallback...")
-                    
-                    fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
-                    
-                    fallback_cmd = [
-                        sys.executable, '-m', 'yt_dlp',
-                        '-g',  # Get URL only
-                        '-f', format_id,
-                        *fallback_options,
-                        url
-                    ]
-                    
-                    result = subprocess.run(
-                        fallback_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=45,
-                        env={**os.environ, 'HOME': '/tmp'}
-                    )
-                    
-                    cleanup_temp_dir(fallback_temp_dir)
+                fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                
+                fallback_cmd = [
+                    sys.executable, '-m', 'yt_dlp',
+                    '-g',  # Get URL only
+                    '-f', format_id,
+                    *fallback_options,
+                    url
+                ]
+                
+                result = subprocess.run(
+                    fallback_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env={**os.environ, 'HOME': '/tmp'}
+                )
+                
+                cleanup_temp_dir(fallback_temp_dir)
             
             if result.returncode != 0:
-                response = jsonify({'error': f'Failed to get direct URL: {result.stderr}'})
+                error_msg = result.stderr.strip()
+                
+                # Provide more helpful error messages
+                if "Sign in to confirm you're not a bot" in error_msg:
+                    response = jsonify({
+                        'error': 'YouTube is blocking automated access. Please try a different video or try again later.',
+                        'technical_error': error_msg
+                    })
+                elif "No video formats found" in error_msg or "format not available" in error_msg.lower():
+                    response = jsonify({
+                        'error': f'The requested format ({format_id}) is not available for this video. Please try a different format.',
+                        'technical_error': error_msg
+                    })
+                else:
+                    response = jsonify({
+                        'error': f'Failed to get direct URL: {error_msg}',
+                        'technical_error': error_msg
+                    })
+                
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
@@ -459,6 +435,51 @@ def get_direct_url():
 @app.route('/health')
 def health_check():
     return jsonify({'status': 'healthy', 'message': 'DebuTube API is running perfectly!'})
+
+# Cookie information endpoint
+@app.route('/api/cookie-info', methods=['GET', 'OPTIONS'])
+def cookie_info():
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response
+    
+    cookie_info = {
+        'message': 'Cookie Authentication Information',
+        'description': 'If you encounter bot detection errors, you may need to provide cookies from your browser.',
+        'methods': {
+            'automatic': {
+                'description': 'The API automatically tries to extract cookies from Chrome browser if available',
+                'note': 'This works if you have Chrome installed and are logged into YouTube'
+            },
+            'manual': {
+                'description': 'You can manually export cookies using browser extensions',
+                'extensions': {
+                    'chrome': 'Get cookies.txt LOCALLY - Available in Chrome Web Store',
+                    'firefox': 'cookies.txt - Available in Firefox Add-ons'
+                },
+                'steps': [
+                    '1. Install a cookie export extension',
+                    '2. Visit YouTube and log in',
+                    '3. Export cookies for youtube.com',
+                    '4. Save the cookies.txt file',
+                    '5. Contact the API administrator to configure cookie support'
+                ]
+            }
+        },
+        'privacy_note': 'Cookies contain your authentication information. Only use trusted extensions and never share cookie files.',
+        'troubleshooting': {
+            'bot_detection': 'If you see "Sign in to confirm you\'re not a bot", try using a different video or wait before retrying',
+            'age_restricted': 'Age-restricted videos require authentication and may not work without proper cookies',
+            'private_videos': 'Private or unlisted videos require authentication from the video owner\'s account'
+        }
+    }
+    
+    response = jsonify(cookie_info)
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
 # Catch-all route to handle other API requests
 @app.route('/api/<path:path>', methods=['GET', 'POST', 'OPTIONS'])
