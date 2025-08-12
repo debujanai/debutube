@@ -6,6 +6,7 @@ import os
 import tempfile
 import random
 import base64
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -17,44 +18,66 @@ USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 ]
 
-# YouTube cookies for accessing age-restricted and private content
-YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
-# http://curl.haxx.se/rfc/cookie_spec.html
-# This is a generated file!  Do not edit.
-
-.youtube.com	TRUE	/	TRUE	1754964596	GPS	1
-.youtube.com	TRUE	/	TRUE	1789522799	PREF	f6=40000000&tz=Asia.Karachi
-.youtube.com	TRUE	/	TRUE	1754964596	GPS	1
-.youtube.com	TRUE	/	TRUE	0	YSC	G9TKfyk0caU
-.youtube.com	TRUE	/	TRUE	1770514799	VISITOR_INFO1_LIVE	Xal1p7296vs
-.youtube.com	TRUE	/	TRUE	1770514799	VISITOR_PRIVACY_METADATA	CgJQSxIEGgAgMQ%3D%3D
-.youtube.com	TRUE	/	TRUE	1789522799	PREF	f6=40000000&tz=Asia.Karachi
-.youtube.com	TRUE	/	TRUE	1770514798	__Secure-ROLLOUT_TOKEN	CNe13Y-LmNCs-AEQx9u78JGEjwMYj9yk8ZGEjwM%3D"""
-
-def save_cookies_to_temp_file(cookies_content):
-    """Save cookies content to a temporary file and return the path"""
-    try:
-        # Create a temporary file for cookies
-        temp_fd, temp_path = tempfile.mkstemp(suffix='.txt', prefix='youtube_cookies_')
+class CookieManager:
+    """Secure cookie management for YouTube authentication"""
+    
+    def __init__(self):
+        self.data_dir = os.path.join(tempfile.gettempdir(), 'ytdlp_cookies')
+        os.makedirs(self.data_dir, exist_ok=True)
+    
+    def save_cookies(self, cookies_data, session_id=None):
+        """Save cookies securely to temporary file"""
+        if not session_id:
+            session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{random.randint(1000, 9999)}"
         
-        # Decode if cookies are base64 encoded
-        if cookies_content.startswith('data:'):
-            # Handle data URL format (data:text/plain;base64,...)
-            header, encoded = cookies_content.split(',', 1)
-            if 'base64' in header:
-                cookies_content = base64.b64decode(encoded).decode('utf-8')
+        cookie_file = os.path.join(self.data_dir, f"{session_id}.txt")
         
-        # Write cookies to the temporary file
-        with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
-            f.write(cookies_content)
-        
-        return temp_path
-    except Exception as e:
-        print(f"Error saving cookies: {e}")
-        return None
+        try:
+            # Handle different cookie formats
+            if isinstance(cookies_data, str):
+                # If it's a base64 encoded cookie file
+                if cookies_data.startswith('data:'):
+                    # Handle data URL format
+                    _, encoded = cookies_data.split(',', 1)
+                    cookie_content = base64.b64decode(encoded).decode('utf-8')
+                else:
+                    cookie_content = cookies_data
+            else:
+                cookie_content = str(cookies_data)
+            
+            with open(cookie_file, 'w', encoding='utf-8') as f:
+                f.write(cookie_content)
+            
+            return cookie_file
+            
+        except Exception as e:
+            print(f"Error saving cookies: {str(e)}")
+            return None
+    
+    def cleanup_cookie_file(self, cookie_file):
+        """Securely cleanup cookie file"""
+        try:
+            if cookie_file and os.path.exists(cookie_file):
+                os.remove(cookie_file)
+        except Exception:
+            pass
+    
+    def cleanup_old_sessions(self, max_age_hours=1):
+        """Clean up old cookie sessions"""
+        try:
+            current_time = datetime.now()
+            for filename in os.listdir(self.data_dir):
+                file_path = os.path.join(self.data_dir, filename)
+                if os.path.isfile(file_path):
+                    file_age = datetime.fromtimestamp(os.path.getctime(file_path))
+                    age_hours = (current_time - file_age).total_seconds() / 3600
+                    if age_hours > max_age_hours:
+                        os.remove(file_path)
+        except Exception:
+            pass
 
-def get_ytdlp_base_options(url, cookies_file=None, use_builtin_cookies=True):
-    """Get base yt-dlp options optimized for Vercel serverless environment"""
+def get_ytdlp_base_options(url, cookie_file=None):
+    """Get base yt-dlp options optimized for Vercel serverless environment with cookie support"""
     temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
     user_agent = random.choice(USER_AGENTS)
     
@@ -63,21 +86,25 @@ def get_ytdlp_base_options(url, cookies_file=None, use_builtin_cookies=True):
         '--cache-dir', temp_cache_dir,  # Use temp directory for any cache needs
         '--user-agent', user_agent,
         '--referer', 'https://www.youtube.com/',
-        '--extractor-retries', '3',
-        '--fragment-retries', '3',
-        '--retry-sleep', '1',
+        '--extractor-retries', '5',  # Increased retries
+        '--fragment-retries', '5',
+        '--retry-sleep', '2',  # Increased sleep time
         '--socket-timeout', '30',
         '--no-check-certificate',  # Skip SSL verification issues
+        '--no-warnings',  # Reduce noise in logs
     ]
     
-    # Add cookies if provided or use built-in cookies
-    if cookies_file and os.path.exists(cookies_file):
-        base_options.extend(['--cookies', cookies_file])
-    elif use_builtin_cookies:
-        # Use built-in YouTube cookies
-        builtin_cookies_file = save_cookies_to_temp_file(YOUTUBE_COOKIES)
-        if builtin_cookies_file:
-            base_options.extend(['--cookies', builtin_cookies_file])
+    # Add cookie support if provided
+    if cookie_file and os.path.exists(cookie_file):
+        base_options.extend(['--cookies', cookie_file])
+    
+    # Add environment-specific options
+    env_cookies = os.environ.get('YTDLP_COOKIES')
+    if env_cookies and not cookie_file:
+        cookie_manager = CookieManager()
+        env_cookie_file = cookie_manager.save_cookies(env_cookies, 'env_session')
+        if env_cookie_file:
+            base_options.extend(['--cookies', env_cookie_file])
     
     return base_options, temp_cache_dir
 
@@ -86,14 +113,6 @@ def cleanup_temp_dir(temp_dir):
     try:
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
-    except:
-        pass
-
-def cleanup_temp_file(temp_file):
-    """Clean up temporary file"""
-    try:
-        if temp_file and os.path.exists(temp_file):
-            os.unlink(temp_file)
     except:
         pass
 
@@ -107,11 +126,16 @@ def get_formats():
         response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
         return response
     
-    cookies_file = None
+    cookie_manager = CookieManager()
+    cookie_file = None
+    
     try:
+        # Clean up old sessions
+        cookie_manager.cleanup_old_sessions()
+        
         data = request.get_json()
         url = data.get('url') if data else None
-        cookies_content = data.get('cookies') if data else None
+        cookies = data.get('cookies') if data else None  # New cookie support
         
         if not url:
             response = jsonify({'error': 'URL is required'})
@@ -127,18 +151,18 @@ def get_formats():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Handle cookies if provided (otherwise built-in cookies will be used automatically)
-        if cookies_content:
-            cookies_file = save_cookies_to_temp_file(cookies_content)
-            if not cookies_file:
+        # Handle cookies if provided
+        if cookies:
+            cookie_file = cookie_manager.save_cookies(cookies)
+            if not cookie_file:
                 response = jsonify({'error': 'Failed to process cookies'})
                 response.status_code = 400
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
         
-        # Run yt-dlp to get video information (will use built-in cookies if no custom cookies provided)
+        # Run yt-dlp to get video information with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, cookies_file, use_builtin_cookies=True)
+            base_options, temp_cache_dir = get_ytdlp_base_options(url, cookie_file)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -152,17 +176,26 @@ def get_formats():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=45,  # Increased timeout for cookie authentication
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
-            # Clean up temp directory and cookies file
+            # Clean up temp directory and cookie file
             cleanup_temp_dir(temp_cache_dir)
-            if cookies_file:
-                cleanup_temp_file(cookies_file)
+            if cookie_file:
+                cookie_manager.cleanup_cookie_file(cookie_file)
             
             if result.returncode != 0:
-                response = jsonify({'error': f'yt-dlp failed: {result.stderr}'})
+                error_msg = result.stderr
+                # Provide more helpful error messages
+                if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+                    error_msg = 'YouTube bot detection triggered. Please provide valid cookies or try again later.'
+                elif 'Private video' in error_msg or 'members-only' in error_msg.lower():
+                    error_msg = 'This video requires authentication. Please provide valid YouTube cookies.'
+                elif 'age-restricted' in error_msg.lower():
+                    error_msg = 'This video is age-restricted. Please provide valid YouTube cookies to access it.'
+                
+                response = jsonify({'error': f'yt-dlp failed: {error_msg}'})
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response
@@ -204,7 +237,10 @@ def get_formats():
                 'channel_id': video_info.get('channel_id') or video_info.get('uploader_id', ''),
                 'webpage_url': video_info.get('webpage_url', url),
                 'id': video_info.get('id', ''),
-                'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title')
+                'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title'),
+                'age_limit': video_info.get('age_limit', 0),
+                'is_live': video_info.get('is_live', False),
+                'availability': video_info.get('availability', 'public')
             }
             
             response = jsonify({
@@ -236,9 +272,9 @@ def get_formats():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
     finally:
-        # Cleanup cookies file if it exists
-        if cookies_file:
-            cleanup_temp_file(cookies_file)
+        # Always cleanup cookie file
+        if cookie_file:
+            cookie_manager.cleanup_cookie_file(cookie_file)
 
 @app.route('/api/direct-url', methods=['POST', 'OPTIONS'])
 def get_direct_url():
@@ -250,12 +286,14 @@ def get_direct_url():
         response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
         return response
     
-    cookies_file = None
+    cookie_manager = CookieManager()
+    cookie_file = None
+    
     try:
         data = request.get_json()
         url = data.get('url') if data else None
         format_id = data.get('formatId') if data else None
-        cookies_content = data.get('cookies') if data else None
+        cookies = data.get('cookies') if data else None  # New cookie support
         
         if not url or not format_id:
             response = jsonify({'error': 'URL and formatId are required'})
@@ -263,18 +301,13 @@ def get_direct_url():
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Handle cookies if provided (otherwise built-in cookies will be used automatically)
-        if cookies_content:
-            cookies_file = save_cookies_to_temp_file(cookies_content)
-            if not cookies_file:
-                response = jsonify({'error': 'Failed to process cookies'})
-                response.status_code = 400
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
+        # Handle cookies if provided
+        if cookies:
+            cookie_file = cookie_manager.save_cookies(cookies)
         
-        # Run yt-dlp to get direct URL (will use built-in cookies if no custom cookies provided)
+        # Run yt-dlp to get direct URL with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, cookies_file, use_builtin_cookies=True)
+            base_options, temp_cache_dir = get_ytdlp_base_options(url, cookie_file)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -288,14 +321,14 @@ def get_direct_url():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=45,  # Increased timeout for cookie authentication
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
-            # Clean up temp directory and cookies file
+            # Clean up temp directory and cookie file
             cleanup_temp_dir(temp_cache_dir)
-            if cookies_file:
-                cleanup_temp_file(cookies_file)
+            if cookie_file:
+                cookie_manager.cleanup_cookie_file(cookie_file)
             
             if result.returncode != 0:
                 response = jsonify({'error': f'Failed to get direct URL: {result.stderr}'})
@@ -332,14 +365,14 @@ def get_direct_url():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
     finally:
-        # Cleanup cookies file if it exists
-        if cookies_file:
-            cleanup_temp_file(cookies_file)
+        # Always cleanup cookie file
+        if cookie_file:
+            cookie_manager.cleanup_cookie_file(cookie_file)
 
-# Endpoint to test cookies validity (tests built-in cookies if none provided)
-@app.route('/api/test-cookies', methods=['POST', 'OPTIONS'])
-def test_cookies():
-    # Handle CORS preflight
+# New endpoint for cookie validation
+@app.route('/api/validate-cookies', methods=['POST', 'OPTIONS'])
+def validate_cookies():
+    """Validate YouTube cookies by testing access to a known restricted video"""
     if request.method == 'OPTIONS':
         response = jsonify({})
         response.headers.add('Access-Control-Allow-Origin', '*')
@@ -347,82 +380,66 @@ def test_cookies():
         response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
         return response
     
-    cookies_file = None
+    cookie_manager = CookieManager()
+    cookie_file = None
+    
     try:
-        data = request.get_json() if request.get_json() else {}
-        cookies_content = data.get('cookies') if data else None
+        data = request.get_json()
+        cookies = data.get('cookies') if data else None
         
-        # If no cookies provided, test built-in cookies
-        if not cookies_content:
-            cookies_content = YOUTUBE_COOKIES
-            test_type = "built-in"
-        else:
-            test_type = "provided"
+        if not cookies:
+            response = jsonify({'error': 'Cookies are required for validation'})
+            response.status_code = 400
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response
         
-        # Handle cookies
-        cookies_file = save_cookies_to_temp_file(cookies_content)
-        if not cookies_file:
+        # Save cookies temporarily
+        cookie_file = cookie_manager.save_cookies(cookies)
+        if not cookie_file:
             response = jsonify({'error': 'Failed to process cookies'})
             response.status_code = 400
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
         
-        # Test cookies with a simple YouTube request
+        # Test with a simple YouTube video (using robots.txt as mentioned in the instructions)
+        test_url = "https://www.youtube.com/robots.txt"
+        
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options('https://www.youtube.com/', cookies_file, use_builtin_cookies=False)
+            base_options, temp_cache_dir = get_ytdlp_base_options(test_url, cookie_file)
             
+            # Simple test command
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
-                '--dump-json',
-                '--no-download',
-                '--playlist-end', '1',  # Only get first video from homepage
+                '--simulate',
+                '--no-warnings',
                 *base_options,
-                'https://www.youtube.com/'
+                'https://www.youtube.com/watch?v=dQw4w9WgXcQ'  # Test with a known public video
             ]
             
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=15,
-                env={**os.environ, 'HOME': '/tmp'}
+                timeout=30
             )
             
             # Clean up
             cleanup_temp_dir(temp_cache_dir)
-            cleanup_temp_file(cookies_file)
             
-            if result.returncode == 0:
-                response = jsonify({
-                    'valid': True,
-                    'message': f'Cookies are valid and working ({test_type} cookies tested)',
-                    'type': test_type
-                })
-            else:
-                response = jsonify({
-                    'valid': False,
-                    'message': f'Cookies may be invalid or expired ({test_type} cookies tested)',
-                    'error': result.stderr,
-                    'type': test_type
-                })
+            is_valid = result.returncode == 0
+            message = "Cookies are valid and working" if is_valid else "Cookies may be invalid or expired"
             
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-            
-        except subprocess.TimeoutExpired:
             response = jsonify({
-                'valid': False,
-                'message': f'Cookie test timeout ({test_type} cookies tested)',
-                'type': test_type
+                'valid': is_valid,
+                'message': message
             })
-            response.status_code = 500
             response.headers.add('Access-Control-Allow-Origin', '*')
             return response
+            
         except Exception as e:
             response = jsonify({
                 'valid': False,
-                'message': f'Cookie test error: {str(e)} ({test_type} cookies tested)',
-                'type': test_type
+                'message': f'Cookie validation failed: {str(e)}'
             })
             response.status_code = 500
             response.headers.add('Access-Control-Allow-Origin', '*')
@@ -434,9 +451,8 @@ def test_cookies():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
     finally:
-        # Cleanup cookies file if it exists
-        if cookies_file:
-            cleanup_temp_file(cookies_file)
+        if cookie_file:
+            cookie_manager.cleanup_cookie_file(cookie_file)
 
 # Health check endpoint for Vercel
 @app.route('/health')
