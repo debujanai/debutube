@@ -5,8 +5,6 @@ import json
 import os
 import tempfile
 import random
-import shutil
-from pathlib import Path
 
 app = Flask(__name__)
 
@@ -18,7 +16,7 @@ USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 ]
 
-def get_ytdlp_base_options(url, use_cookies=True):
+def get_ytdlp_base_options(url):
     """Get base yt-dlp options optimized for Vercel serverless environment"""
     temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cache_')
     user_agent = random.choice(USER_AGENTS)
@@ -33,32 +31,70 @@ def get_ytdlp_base_options(url, use_cookies=True):
         '--retry-sleep', '1',
         '--socket-timeout', '30',
         '--no-check-certificate',  # Skip SSL verification issues
-        # Additional options to avoid bot detection in serverless environment
-        '--sleep-interval', '1',
-        '--max-sleep-interval', '5',
-        '--sleep-subtitles', '1',
-        # Add headers to mimic real browser behavior
-        '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        '--add-header', 'Accept-Language:en-US,en;q=0.5',
-        '--add-header', 'Accept-Encoding:gzip, deflate',
-        '--add-header', 'DNT:1',
-        '--add-header', 'Connection:keep-alive',
-        '--add-header', 'Upgrade-Insecure-Requests:1',
+        # Bot detection avoidance options (without cookies first)
+        '--sleep-interval', '1',  # Sleep between requests
+        '--max-sleep-interval', '3',  # Max sleep interval
+        '--sleep-requests', '1',  # Sleep every N requests
+        # Additional anti-bot measures
+        '--extractor-args', 'youtube:player_client=web,mweb',  # Use web client
+        '--extractor-args', 'youtube:skip=hls,dash',  # Skip some formats that might trigger detection
+        '--no-warnings',  # Suppress warnings
     ]
     
-    # For serverless environments, we can't use browser cookies
-    # Instead, we'll use other strategies to avoid bot detection
-    if use_cookies:
-        # Add options that help avoid bot detection without requiring browser cookies
-        additional_options = [
-            '--sleep-requests', '1',  # Sleep between requests
-            '--no-part',  # Don't use .part files
-            '--geo-bypass',  # Try to bypass geographical restrictions
-            '--prefer-insecure',  # Prefer HTTP over HTTPS when possible for some extractors
-        ]
-        base_options.extend(additional_options)
-    
     return base_options, temp_cache_dir
+
+def get_ytdlp_with_cookies_options(url):
+    """Get yt-dlp options with cookie extraction (fallback method)"""
+    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_cookies_cache_')
+    user_agent = random.choice(USER_AGENTS)
+    
+    cookie_options = [
+        '--no-cache-dir',
+        '--cache-dir', temp_cache_dir,
+        '--user-agent', user_agent,
+        '--referer', 'https://www.youtube.com/',
+        '--extractor-retries', '2',  # Fewer retries for cookie method
+        '--fragment-retries', '2',
+        '--retry-sleep', '1',
+        '--socket-timeout', '30',
+        '--no-check-certificate',
+        # Try to use browser cookies
+        '--cookies-from-browser', 'chrome',
+        '--sleep-interval', '1',
+        '--max-sleep-interval', '3',
+        '--sleep-requests', '1',
+        '--extractor-args', 'youtube:player_client=web',
+        '--no-warnings',
+    ]
+    
+    return cookie_options, temp_cache_dir
+
+def get_ytdlp_fallback_options(url):
+    """Get fallback yt-dlp options when cookies fail"""
+    temp_cache_dir = tempfile.mkdtemp(prefix='ytdlp_fallback_cache_')
+    user_agent = random.choice(USER_AGENTS)
+    
+    fallback_options = [
+        '--no-cache-dir',
+        '--cache-dir', temp_cache_dir,
+        '--user-agent', user_agent,
+        '--referer', 'https://www.youtube.com/',
+        '--extractor-retries', '5',  # More retries for fallback
+        '--fragment-retries', '5',
+        '--retry-sleep', '2',  # Longer sleep
+        '--socket-timeout', '45',  # Longer timeout
+        '--no-check-certificate',
+        # More aggressive anti-detection
+        '--sleep-interval', '2',
+        '--max-sleep-interval', '5',
+        '--sleep-requests', '1',
+        '--extractor-args', 'youtube:player_client=web',
+        '--extractor-args', 'youtube:skip=dash',  # Skip DASH formats
+        # Try different approach without cookies
+        '--no-warnings',  # Suppress warnings
+    ]
+    
+    return fallback_options, temp_cache_dir
 
 def cleanup_temp_dir(temp_dir):
     """Clean up temporary directory"""
@@ -81,7 +117,6 @@ def get_formats():
     try:
         data = request.get_json()
         url = data.get('url') if data else None
-        use_cookies = data.get('useCookies', True) if data else True  # Default to True
         
         if not url:
             response = jsonify({'error': 'URL is required'})
@@ -99,7 +134,7 @@ def get_formats():
         
         # Run yt-dlp to get video information with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies)
+            base_options, temp_cache_dir = get_ytdlp_base_options(url)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -113,18 +148,87 @@ def get_formats():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=45,  # Increased timeout for cookie processing
+                timeout=30,
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
             # Clean up temp directory
             cleanup_temp_dir(temp_cache_dir)
             
-            if result.returncode != 0:
-                # If cookies failed, try without cookies as fallback
-                if use_cookies and 'Sign in to confirm' in result.stderr:
-                    return retry_without_cookies(url, 'formats')
+            # If primary method fails with bot detection, try cookies first, then fallback
+            if result.returncode != 0 and ('Sign in to confirm' in result.stderr or 'bot' in result.stderr.lower()):
+                print("Primary method failed with bot detection, trying cookies...")
                 
+                # Try with cookies first
+                try:
+                    cookie_options, cookie_temp_dir = get_ytdlp_with_cookies_options(url)
+                    
+                    cookie_cmd = [
+                        sys.executable, '-m', 'yt_dlp',
+                        '--dump-json',
+                        '--no-download',
+                        *cookie_options,
+                        url
+                    ]
+                    
+                    result = subprocess.run(
+                        cookie_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        env={**os.environ, 'HOME': '/tmp'}
+                    )
+                    
+                    cleanup_temp_dir(cookie_temp_dir)
+                    
+                    # If cookies also fail, try final fallback
+                    if result.returncode != 0:
+                        print("Cookie method also failed, trying final fallback...")
+                        
+                        fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                        
+                        fallback_cmd = [
+                            sys.executable, '-m', 'yt_dlp',
+                            '--dump-json',
+                            '--no-download',
+                            *fallback_options,
+                            url
+                        ]
+                        
+                        result = subprocess.run(
+                            fallback_cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=45,  # Longer timeout for fallback
+                            env={**os.environ, 'HOME': '/tmp'}
+                        )
+                        
+                        cleanup_temp_dir(fallback_temp_dir)
+                        
+                except Exception as e:
+                    print(f"Cookie method error: {e}, trying final fallback...")
+                    
+                    fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                    
+                    fallback_cmd = [
+                        sys.executable, '-m', 'yt_dlp',
+                        '--dump-json',
+                        '--no-download',
+                        *fallback_options,
+                        url
+                    ]
+                    
+                    result = subprocess.run(
+                        fallback_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=45,
+                        env={**os.environ, 'HOME': '/tmp'}
+                    )
+                    
+                    cleanup_temp_dir(fallback_temp_dir)
+            
+            if result.returncode != 0:
                 response = jsonify({'error': f'yt-dlp failed: {result.stderr}'})
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
@@ -199,239 +303,6 @@ def get_formats():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-def retry_without_cookies(url, endpoint_type):
-    """Retry the request without cookies as a fallback"""
-    try:
-        base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies=False)
-        
-        if endpoint_type == 'formats':
-            cmd = [
-                sys.executable, '-m', 'yt_dlp',
-                '--dump-json',
-                '--no-download',
-                *base_options,
-                url
-            ]
-        else:  # direct-url
-            format_id = request.get_json().get('formatId')
-            cmd = [
-                sys.executable, '-m', 'yt_dlp',
-                '-g',
-                '-f', format_id,
-                *base_options,
-                url
-            ]
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={**os.environ, 'HOME': '/tmp'}
-        )
-        
-        cleanup_temp_dir(temp_cache_dir)
-        
-        if result.returncode != 0:
-            response = jsonify({
-                'error': f'yt-dlp failed: {result.stderr}',
-                'suggestion': 'This video may require authentication. In serverless environments, try using publicly accessible videos or consider using a different video source.',
-                'serverless_note': 'Browser cookies are not available in serverless deployments like Vercel. For private or age-restricted content, consider running the application locally.'
-            })
-            response.status_code = 500
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-        
-        if endpoint_type == 'formats':
-            video_info = json.loads(result.stdout.strip())
-            formats = video_info.get('formats', [])
-            
-            filtered_formats = []
-            for format_data in formats:
-                if format_data.get('url') and format_data.get('format_id'):
-                    filtered_formats.append({
-                        'format_id': format_data.get('format_id'),
-                        'ext': format_data.get('ext'),
-                        'resolution': format_data.get('resolution'),
-                        'format_note': format_data.get('format_note'),
-                        'filesize': format_data.get('filesize'),
-                        'vcodec': format_data.get('vcodec'),
-                        'acodec': format_data.get('acodec'),
-                        'fps': format_data.get('fps'),
-                        'quality': format_data.get('quality')
-                    })
-            
-            filtered_formats.sort(key=lambda x: x.get('quality', 0) or 0, reverse=True)
-            
-            video_metadata = {
-                'title': video_info.get('title', 'Unknown Title'),
-                'description': video_info.get('description', ''),
-                'duration': video_info.get('duration', 0),
-                'uploader': video_info.get('uploader') or video_info.get('channel', 'Unknown'),
-                'upload_date': video_info.get('upload_date', ''),
-                'view_count': video_info.get('view_count', 0),
-                'like_count': video_info.get('like_count', 0),
-                'thumbnail': video_info.get('thumbnail', ''),
-                'channel': video_info.get('channel') or video_info.get('uploader', 'Unknown'),
-                'channel_id': video_info.get('channel_id') or video_info.get('uploader_id', ''),
-                'webpage_url': video_info.get('webpage_url', url),
-                'id': video_info.get('id', ''),
-                'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title')
-            }
-            
-            response = jsonify({
-                'videoInfo': video_metadata,
-                'formats': filtered_formats,
-                'warning': 'Retrieved in serverless mode - some age-restricted or private content may not be accessible'
-            })
-        else:  # direct-url
-            direct_url = result.stdout.strip()
-            response = jsonify({
-                'directUrl': direct_url,
-                'warning': 'Retrieved in serverless mode - some age-restricted or private content may not be accessible'
-            })
-        
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-        
-    except Exception as e:
-        response = jsonify({'error': f'Processing error: {str(e)}'})
-        response.status_code = 500
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-
-# New endpoint for manual cookie file handling (for advanced users)
-@app.route('/api/formats-with-cookies', methods=['POST', 'OPTIONS'])
-def get_formats_with_manual_cookies():
-    """Get video formats using manually provided cookies (base64 encoded)"""
-    if request.method == 'OPTIONS':
-        response = jsonify({})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response
-    
-    try:
-        data = request.get_json()
-        url = data.get('url') if data else None
-        cookies_content = data.get('cookies') if data else None  # Base64 encoded cookies file content
-        
-        if not url:
-            response = jsonify({'error': 'URL is required'})
-            response.status_code = 400
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-        
-        if not cookies_content:
-            response = jsonify({'error': 'Cookies content is required for this endpoint'})
-            response.status_code = 400
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-        
-        # Validate YouTube URL
-        youtube_patterns = ['youtube.com', 'youtu.be', 'youtube-nocookie.com']
-        if not any(pattern in url for pattern in youtube_patterns):
-            response = jsonify({'error': 'Please provide a valid YouTube URL'})
-            response.status_code = 400
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-        
-        try:
-            # Decode base64 cookies content
-            import base64
-            decoded_cookies = base64.b64decode(cookies_content).decode('utf-8')
-            
-            # Create temporary cookie file
-            cookie_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-            cookie_file.write(decoded_cookies)
-            cookie_file.close()
-            
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies=False)
-            
-            cmd = [
-                sys.executable, '-m', 'yt_dlp',
-                '--dump-json',
-                '--no-download',
-                '--cookies', cookie_file.name,
-                *base_options,
-                url
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=45,
-                env={**os.environ, 'HOME': '/tmp'}
-            )
-            
-            # Clean up
-            cleanup_temp_dir(temp_cache_dir)
-            os.unlink(cookie_file.name)
-            
-            if result.returncode != 0:
-                response = jsonify({'error': f'yt-dlp failed with cookies: {result.stderr}'})
-                response.status_code = 500
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
-            
-            # Parse and return results (same as regular endpoint)
-            video_info = json.loads(result.stdout.strip())
-            formats = video_info.get('formats', [])
-            
-            filtered_formats = []
-            for format_data in formats:
-                if format_data.get('url') and format_data.get('format_id'):
-                    filtered_formats.append({
-                        'format_id': format_data.get('format_id'),
-                        'ext': format_data.get('ext'),
-                        'resolution': format_data.get('resolution'),
-                        'format_note': format_data.get('format_note'),
-                        'filesize': format_data.get('filesize'),
-                        'vcodec': format_data.get('vcodec'),
-                        'acodec': format_data.get('acodec'),
-                        'fps': format_data.get('fps'),
-                        'quality': format_data.get('quality')
-                    })
-            
-            filtered_formats.sort(key=lambda x: x.get('quality', 0) or 0, reverse=True)
-            
-            video_metadata = {
-                'title': video_info.get('title', 'Unknown Title'),
-                'description': video_info.get('description', ''),
-                'duration': video_info.get('duration', 0),
-                'uploader': video_info.get('uploader') or video_info.get('channel', 'Unknown'),
-                'upload_date': video_info.get('upload_date', ''),
-                'view_count': video_info.get('view_count', 0),
-                'like_count': video_info.get('like_count', 0),
-                'thumbnail': video_info.get('thumbnail', ''),
-                'channel': video_info.get('channel') or video_info.get('uploader', 'Unknown'),
-                'channel_id': video_info.get('channel_id') or video_info.get('uploader_id', ''),
-                'webpage_url': video_info.get('webpage_url', url),
-                'id': video_info.get('id', ''),
-                'fulltitle': video_info.get('fulltitle') or video_info.get('title', 'Unknown Title')
-            }
-            
-            response = jsonify({
-                'videoInfo': video_metadata,
-                'formats': filtered_formats,
-                'note': 'Retrieved using manual cookies'
-            })
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-            
-        except Exception as e:
-            response = jsonify({'error': f'Cookie processing error: {str(e)}'})
-            response.status_code = 500
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
-            
-    except Exception as e:
-        response = jsonify({'error': f'Server error: {str(e)}'})
-        response.status_code = 500
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-
 @app.route('/api/direct-url', methods=['POST', 'OPTIONS'])
 def get_direct_url():
     # Handle CORS preflight
@@ -446,7 +317,6 @@ def get_direct_url():
         data = request.get_json()
         url = data.get('url') if data else None
         format_id = data.get('formatId') if data else None
-        use_cookies = data.get('useCookies', True) if data else True  # Default to True
         
         if not url or not format_id:
             response = jsonify({'error': 'URL and formatId are required'})
@@ -456,7 +326,7 @@ def get_direct_url():
         
         # Run yt-dlp to get direct URL with Vercel-compatible options
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(url, use_cookies)
+            base_options, temp_cache_dir = get_ytdlp_base_options(url)
             
             cmd = [
                 sys.executable, '-m', 'yt_dlp',
@@ -470,18 +340,87 @@ def get_direct_url():
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=45,  # Increased timeout for cookie processing
+                timeout=30,
                 env={**os.environ, 'HOME': '/tmp'}  # Set HOME to /tmp for any home directory writes
             )
             
             # Clean up temp directory
             cleanup_temp_dir(temp_cache_dir)
             
-            if result.returncode != 0:
-                # If cookies failed, try without cookies as fallback
-                if use_cookies and 'Sign in to confirm' in result.stderr:
-                    return retry_without_cookies(url, 'direct-url')
+            # If primary method fails with bot detection, try cookies first, then fallback
+            if result.returncode != 0 and ('Sign in to confirm' in result.stderr or 'bot' in result.stderr.lower()):
+                print("Primary method failed with bot detection, trying cookies...")
                 
+                # Try with cookies first
+                try:
+                    cookie_options, cookie_temp_dir = get_ytdlp_with_cookies_options(url)
+                    
+                    cookie_cmd = [
+                        sys.executable, '-m', 'yt_dlp',
+                        '-g',  # Get URL only
+                        '-f', format_id,
+                        *cookie_options,
+                        url
+                    ]
+                    
+                    result = subprocess.run(
+                        cookie_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        env={**os.environ, 'HOME': '/tmp'}
+                    )
+                    
+                    cleanup_temp_dir(cookie_temp_dir)
+                    
+                    # If cookies also fail, try final fallback
+                    if result.returncode != 0:
+                        print("Cookie method also failed, trying final fallback...")
+                        
+                        fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                        
+                        fallback_cmd = [
+                            sys.executable, '-m', 'yt_dlp',
+                            '-g',  # Get URL only
+                            '-f', format_id,
+                            *fallback_options,
+                            url
+                        ]
+                        
+                        result = subprocess.run(
+                            fallback_cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=45,  # Longer timeout for fallback
+                            env={**os.environ, 'HOME': '/tmp'}
+                        )
+                        
+                        cleanup_temp_dir(fallback_temp_dir)
+                        
+                except Exception as e:
+                    print(f"Cookie method error: {e}, trying final fallback...")
+                    
+                    fallback_options, fallback_temp_dir = get_ytdlp_fallback_options(url)
+                    
+                    fallback_cmd = [
+                        sys.executable, '-m', 'yt_dlp',
+                        '-g',  # Get URL only
+                        '-f', format_id,
+                        *fallback_options,
+                        url
+                    ]
+                    
+                    result = subprocess.run(
+                        fallback_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=45,
+                        env={**os.environ, 'HOME': '/tmp'}
+                    )
+                    
+                    cleanup_temp_dir(fallback_temp_dir)
+            
+            if result.returncode != 0:
                 response = jsonify({'error': f'Failed to get direct URL: {result.stderr}'})
                 response.status_code = 500
                 response.headers.add('Access-Control-Allow-Origin', '*')
@@ -512,40 +451,6 @@ def get_direct_url():
             
     except Exception as e:
         response = jsonify({'error': f'Server error: {str(e)}'})
-        response.status_code = 500
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-
-# New endpoint to check serverless environment capabilities
-@app.route('/api/cookie-browsers', methods=['GET', 'OPTIONS'])
-def get_cookie_browsers():
-    """Get information about cookie capabilities in serverless environment"""
-    if request.method == 'OPTIONS':
-        response = jsonify({})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        return response
-    
-    try:
-        # In serverless environments like Vercel, browser cookies aren't available
-        response = jsonify({
-            'availableBrowsers': [],
-            'recommendation': None,
-            'environment': 'serverless',
-            'message': 'Browser cookies are not available in serverless environments. Using alternative bot detection avoidance strategies.',
-            'strategies': [
-                'Randomized user agents',
-                'Request throttling and delays',
-                'Additional HTTP headers',
-                'Geographical bypass attempts'
-            ]
-        })
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-        
-    except Exception as e:
-        response = jsonify({'error': f'Error checking environment: {str(e)}'})
         response.status_code = 500
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
