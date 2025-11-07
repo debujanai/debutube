@@ -519,7 +519,7 @@ def validate_cookies():
         test_url = "https://www.youtube.com/robots.txt"
         
         try:
-            base_options, temp_cache_dir = get_ytdlp_base_options(test_url, cookie_file)
+            base_options, temp_cache_dir, file_cookie_file = get_ytdlp_base_options(test_url, cookie_file)
             
             # Simple test command
             cmd = [
@@ -539,6 +539,8 @@ def validate_cookies():
             
             # Clean up
             cleanup_temp_dir(temp_cache_dir)
+            if file_cookie_file:
+                cookie_manager.cleanup_cookie_file(file_cookie_file)
             
             is_valid = result.returncode == 0
             message = "Cookies are valid and working" if is_valid else "Cookies may be invalid or expired"

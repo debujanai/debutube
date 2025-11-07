@@ -97,7 +97,25 @@ export default function Home() {
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch formats')
+        const errorMsg = data.error || 'Failed to fetch formats'
+        const details = data.details ? `\n\nDetails: ${data.details}` : ''
+        const hint = data.hint ? `\n\nHint: ${data.hint}` : ''
+        throw new Error(errorMsg + details + hint)
+      }
+
+      // Check if we got valid data
+      if (!data.videoInfo) {
+        throw new Error('Invalid response: Missing video information')
+      }
+
+      // Check if formats array exists and has items
+      if (!data.formats || !Array.isArray(data.formats) || data.formats.length === 0) {
+        console.warn('⚠️ No formats returned:', data)
+        setError('No formats available for this video. The video might be restricted or unavailable.')
+        setVideoInfo(data.videoInfo)
+        setFormats([])
+        setLoading(false)
+        return
       }
 
       setVideoInfo(data.videoInfo)
