@@ -124,6 +124,8 @@ def get_ytdlp_base_options(url, cookie_file=None):
         '--no-warnings',  # Reduce noise in logs
         '--add-header', 'Accept-Language:en-US,en;q=0.9',  # Add language header
         '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',  # Add accept header
+        # Use modern YouTube player clients to avoid "not available on this app" errors
+        '--extractor-args', 'youtube:player_client=tv,android_sdkless,web,ios,android,web_safari',
     ]
     
     # Add cookie support - prioritize file-based cookies
@@ -263,7 +265,14 @@ def get_formats():
             if result.returncode != 0:
                 error_msg = result.stderr
                 # Provide more helpful error messages
-                if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+                if 'not available on this app' in error_msg.lower() or 'watch on the latest version' in error_msg.lower():
+                    error_response = {
+                        'error': 'This video is not available with the current YouTube client.',
+                        'help': 'YouTube may require a newer client version or the video may be restricted.',
+                        'solution': 'Try updating yt-dlp with: pip install -U yt-dlp, or the video may require authentication',
+                        'technical': 'The error suggests YouTube is blocking the request due to client version. Multiple player clients are being tried automatically.'
+                    }
+                elif 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
                     if not cookies:
                         error_response = {
                             'error': 'YouTube bot detection triggered. Using file-based cookies but they may be expired.',
@@ -305,24 +314,67 @@ def get_formats():
             video_info = json.loads(result.stdout.strip())
             formats = video_info.get('formats', [])
             
-            # Filter and process formats
+            # Filter and process formats - include URL for direct downloads
             filtered_formats = []
             for format_data in formats:
-                if format_data.get('url') and format_data.get('format_id'):
-                    filtered_formats.append({
+                # Include formats that have a URL (downloadable) or format_id
+                if format_data.get('url') or format_data.get('format_id'):
+                    format_obj = {
                         'format_id': format_data.get('format_id'),
                         'ext': format_data.get('ext'),
                         'resolution': format_data.get('resolution'),
                         'format_note': format_data.get('format_note'),
                         'filesize': format_data.get('filesize'),
+                        'filesize_approx': format_data.get('filesize_approx'),
                         'vcodec': format_data.get('vcodec'),
                         'acodec': format_data.get('acodec'),
                         'fps': format_data.get('fps'),
-                        'quality': format_data.get('quality')
-                    })
+                        'quality': format_data.get('quality'),
+                        'width': format_data.get('width'),
+                        'height': format_data.get('height'),
+                        'tbr': format_data.get('tbr'),
+                        'abr': format_data.get('abr'),
+                        'vbr': format_data.get('vbr'),
+                        'protocol': format_data.get('protocol'),
+                        'format': format_data.get('format'),
+                    }
+                    
+                    # Include URL if available (for direct download links)
+                    if format_data.get('url'):
+                        format_obj['url'] = format_data.get('url')
+                    
+                    # Determine if it's video-only, audio-only, or combined
+                    has_video = format_data.get('vcodec') and format_data.get('vcodec') != 'none'
+                    has_audio = format_data.get('acodec') and format_data.get('acodec') != 'none'
+                    
+                    if has_video and not has_audio:
+                        format_obj['type'] = 'video'
+                    elif has_audio and not has_video:
+                        format_obj['type'] = 'audio'
+                    else:
+                        format_obj['type'] = 'combined'
+                    
+                    filtered_formats.append(format_obj)
             
-            # Sort by quality
+            # Sort by quality (higher is better)
             filtered_formats.sort(key=lambda x: x.get('quality', 0) or 0, reverse=True)
+            
+            # Separate formats by type for easier frontend handling
+            video_formats = [f for f in filtered_formats if f.get('type') in ['video', 'combined']]
+            audio_formats = [f for f in filtered_formats if f.get('type') in ['audio', 'combined']]
+            
+            # Sort video formats by resolution/quality
+            video_formats.sort(key=lambda x: (
+                x.get('height', 0) or 0,
+                x.get('width', 0) or 0,
+                x.get('quality', 0) or 0
+            ), reverse=True)
+            
+            # Sort audio formats by bitrate/quality
+            audio_formats.sort(key=lambda x: (
+                x.get('abr', 0) or 0,
+                x.get('quality', 0) or 0
+            ), reverse=True)
             
             # Extract video metadata
             video_metadata = {
@@ -346,7 +398,9 @@ def get_formats():
             
             response = jsonify({
                 'videoInfo': video_metadata,
-                'formats': filtered_formats,
+                'formats': filtered_formats,  # All formats
+                'videoFormats': video_formats,  # Video-only and combined formats
+                'audioFormats': audio_formats,  # Audio-only and combined formats
                 'using_file_cookies': bool(file_cookie_file),  # Debug info
                 'using_custom_cookies': bool(cookies)  # Debug info
             })
