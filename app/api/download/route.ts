@@ -85,12 +85,12 @@ async function fetchChunk(url: string, start: number, end: number): Promise<Chun
   throw new Error(`Upstream chunk ${start}-${end} failed: too many redirects`)
 }
 
-async function openPlayable(watch: string, formatId: string) {
+async function openPlayable(watch: string, formatId: string, cookies?: string) {
   const failures: string[] = []
   for (const client of PLAYBACK_CLIENTS) {
     let link = ''
     try {
-      link = await extractPlaybackUrl(watch, formatId, client)
+      link = await extractPlaybackUrl(watch, formatId, client, cookies)
       const knownTotal = Number(new URL(link).searchParams.get('clen')) || 0
       const end = knownTotal ? Math.min(CHUNK_SIZE - 1, knownTotal - 1) : CHUNK_SIZE - 1
       const first = await fetchChunk(link, 0, end)
@@ -104,17 +104,31 @@ async function openPlayable(watch: string, formatId: string) {
 }
 
 export async function GET(request: NextRequest) {
+  return serve(new URL(request.url).searchParams)
+}
+
+// The page submits a form POST so pasted cookies can travel without bloating the URL.
+export async function POST(request: NextRequest) {
+  const form = await request.formData()
+  const params = new URLSearchParams()
+  form.forEach((value, key) => {
+    if (typeof value === 'string') params.set(key, value)
+  })
+  return serve(params)
+}
+
+async function serve(searchParams: URLSearchParams) {
   try {
-    const { searchParams } = new URL(request.url)
     const watch = searchParams.get('watch')
     const formatId = searchParams.get('format')
     const filename = searchParams.get('filename') || 'video.mp4'
+    const cookies = searchParams.get('cookies') || undefined
 
     if (!watch || !formatId) {
       return NextResponse.json({ error: 'Video URL and format are required' }, { status: 400 })
     }
 
-    const opened = await openPlayable(watch, formatId)
+    const opened = await openPlayable(watch, formatId, cookies)
     const { link, first } = opened
     let total = opened.knownTotal
     const contentType = first.headers.get('content-type') || 'application/octet-stream'

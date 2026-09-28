@@ -179,6 +179,7 @@ export default function Home() {
       return
     }
 
+    if (downloadingFormats.has(formatId)) return
     setDownloadingFormats(prev => new Set(prev).add(formatId))
     
     try {
@@ -187,15 +188,33 @@ export default function Home() {
       const filename = `${cleanTitle}_${resolution || formatId}.${ext}`
 
       // Extract and fetch inside one function so YouTube sees the same IP.
-      const downloadUrl = `/api/download?watch=${encodeURIComponent(url)}&format=${encodeURIComponent(formatId)}&filename=${encodeURIComponent(filename)}`
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = filename
-      link.style.display = 'none'
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      
+      const form = document.createElement('form')
+      form.method = 'POST'
+      form.action = '/api/download'
+      form.style.display = 'none'
+      let frame = document.getElementById('download-frame') as HTMLIFrameElement | null
+      if (!frame) {
+        frame = document.createElement('iframe')
+        frame.id = 'download-frame'
+        frame.name = 'download-frame'
+        frame.style.display = 'none'
+        document.body.appendChild(frame)
+      }
+      form.target = 'download-frame'
+      const fields = getRequestBody({ watch: url, format: formatId, filename })
+      for (const [name, value] of Object.entries(fields)) {
+        const input = document.createElement('input')
+        input.type = 'hidden'
+        input.name = name
+        input.value = value
+        form.appendChild(input)
+      }
+      document.body.appendChild(form)
+      form.submit()
+      document.body.removeChild(form)
+
+      // The browser gives no signal when a form download starts, so hold the button briefly.
+      await new Promise((resolve) => setTimeout(resolve, 8000))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to download')
     } finally {
@@ -498,7 +517,7 @@ export default function Home() {
             ) : isDownloading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                DOWNLOADING...
+                STARTING DOWNLOAD...
               </>
             ) : (
               <>

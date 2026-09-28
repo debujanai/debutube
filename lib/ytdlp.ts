@@ -1,4 +1,4 @@
-import { YtDlp } from 'ytdlp-nodejs'
+import { YtDlp, helpers } from 'ytdlp-nodejs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
@@ -8,6 +8,12 @@ import path from 'path'
 const execFileAsync = promisify(execFile)
 
 const binary = path.join(process.cwd(), 'node_modules', 'ytdlp-nodejs', 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')
+
+function resolveBinary() {
+  if (fs.existsSync(binary)) return binary
+  const found = (helpers.findYtdlpBinary as () => string | undefined)()
+  return found || 'yt-dlp'
+}
 
 const ytdlp = new YtDlp({
   binaryPath: fs.existsSync(binary) ? binary : undefined,
@@ -199,17 +205,17 @@ export async function listFormats(url: string, cookies?: string) {
 // but cookie-backed links may 403 on later byte ranges.
 export const PLAYBACK_CLIENTS = ['tv_embedded', 'web_safari', 'ios', 'cookies'] as const
 
-export async function extractPlaybackUrl(url: string, formatId: string, client: string) {
+export async function extractPlaybackUrl(url: string, formatId: string, client: string, cookies?: string) {
   const jsRuntime = process.platform === 'win32' ? `node:${process.execPath}` : 'node'
-  const jar = client === 'cookies' ? withCookies() : null
-  if (jar && !jar.options.cookies) throw new Error('no server cookies configured (YTDLP_COOKIES)')
+  const jar = client === 'cookies' ? withCookies(cookies) : null
+  if (jar && !jar.options.cookies) throw new Error('no cookies provided')
   const clientArgs = jar
     ? ['--cookies', jar.options.cookies!, '--extractor-args', 'youtube:lang=en']
     : ['--extractor-args', `youtube:player_client=${client};lang=en`]
   let stdout = ''
   try {
     const result = await execFileAsync(
-      fs.existsSync(binary) ? binary : 'yt-dlp',
+      resolveBinary(),
       [
         '--no-warnings',
         '--no-config',
