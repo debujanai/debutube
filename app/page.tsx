@@ -186,27 +186,15 @@ export default function Home() {
       const cleanTitle = videoTitle.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').substring(0, 50)
       const filename = `${cleanTitle}_${resolution || formatId}.${ext}`
 
-      const fileResponse = await fetch('/api/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(getRequestBody({ url, formatId, filename })),
-      })
-
-      if (!fileResponse.ok) {
-        const failure = await fileResponse.json().catch(() => ({}))
-        throw new Error(failure.error || 'Failed to download')
-      }
-
-      const blob = await fileResponse.blob()
-      const objectUrl = URL.createObjectURL(blob)
+      // Extract and fetch inside one function so YouTube sees the same IP.
+      const downloadUrl = `/api/download?watch=${encodeURIComponent(url)}&format=${encodeURIComponent(formatId)}&filename=${encodeURIComponent(filename)}`
       const link = document.createElement('a')
-      link.href = objectUrl
+      link.href = downloadUrl
       link.download = filename
       link.style.display = 'none'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000)
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to download')
@@ -472,12 +460,6 @@ export default function Home() {
               <div className="text-center">
                 <div className="text-[#64748b]">Codec</div>
                 <div className="font-semibold text-xs" style={{ color: colors.text }}>{format.vcodec.split('.')[0]}</div>
-              </div>
-            )}
-            {format.format_note && (
-              <div className="text-center">
-                <div className="text-[#64748b]">Track</div>
-                <div className="font-semibold text-xs" style={{ color: colors.text }}>{format.format_note}</div>
               </div>
             )}
           </div>

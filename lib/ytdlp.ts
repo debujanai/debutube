@@ -7,39 +7,11 @@ import path from 'path'
 
 const execFileAsync = promisify(execFile)
 
-function bundledBinary() {
-  // ytdlp-nodejs saves the GitHub asset name, not "yt-dlp". On Vercel that file is yt-dlp_linux.
-  const dirs = [path.join(process.cwd(), 'node_modules', 'ytdlp-nodejs', 'bin')]
-  try {
-    dirs.unshift(path.resolve(path.dirname(require.resolve('ytdlp-nodejs')), '..', 'bin'))
-  } catch {
-    // package resolution failed; keep the cwd path
-  }
-  const names =
-    process.platform === 'win32'
-      ? ['yt-dlp.exe']
-      : process.platform === 'darwin'
-        ? ['yt-dlp_macos', 'yt-dlp']
-        : ['yt-dlp_linux', 'yt-dlp_musllinux', 'yt-dlp_linux_aarch64', 'yt-dlp']
-  const found = dirs
-    .flatMap((binDir) => names.map((name) => path.join(binDir, name)))
-    .find((candidate) => fs.existsSync(candidate))
-  if (!found) {
-    throw new Error(`yt-dlp binary is missing. Looked in ${dirs.join(', ')}`)
-  }
-  if (process.platform === 'win32') return found
-  try {
-    fs.accessSync(found, fs.constants.X_OK)
-    return found
-  } catch {
-    const dest = path.join(os.tmpdir(), path.basename(found))
-    if (!fs.existsSync(dest)) fs.copyFileSync(found, dest)
-    fs.chmodSync(dest, 0o755)
-    return dest
-  }
-}
+const binary = path.join(process.cwd(), 'node_modules', 'ytdlp-nodejs', 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')
 
-const ytdlp = new YtDlp()
+const ytdlp = new YtDlp({
+  binaryPath: fs.existsSync(binary) ? binary : undefined,
+})
 
 type RawFormat = {
   format_id?: string
@@ -60,9 +32,7 @@ type RawFormat = {
   protocol?: string
   format?: string
   url?: string
-  language?: string
-  language_preference?: number
-  http_headers?: Record<string, string>
+  language?: string | null
 }
 
 export type ListedFormat = {
@@ -84,7 +54,7 @@ export type ListedFormat = {
   protocol?: string
   format?: string
   url?: string
-  language?: string
+  language?: string | null
   type: 'video' | 'audio' | 'combined'
 }
 
@@ -98,16 +68,41 @@ function cookieSource(cookies?: string) {
   return ''
 }
 
+function forceEnglishPrefs(raw: string) {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!line || line.startsWith('#')) return line
+      const parts = line.split('\t')
+      if (parts.length < 7 || parts[5] !== 'PREF') return line
+      let value = parts.slice(6).join('\t')
+      value = value.replace(/(^|&)hl=[^&]*/g, '$1hl=en')
+      if (!/(^|&)hl=/.test(value)) value = value ? `${value}&hl=en` : 'hl=en'
+      parts.splice(6, parts.length - 6, value)
+      return parts.join('\t')
+    })
+    .join('\n')
+}
+
 function withCookies(cookies?: string) {
   const source = cookieSource(cookies)
   if (!source) return { options: {} as { cookies?: string }, cleanup: () => {} }
-  if (!source.includes('\n') && fs.existsSync(source)) {
-    return { options: { cookies: source }, cleanup: () => {} }
-  }
+  const raw = !source.includes('\n') && fs.existsSync(source) ? fs.readFileSync(source, 'utf8') : source
+  const body = forceEnglishPrefs(
+    raw.includes('# Netscape HTTP Cookie File') ? raw : `# Netscape HTTP Cookie File\n${raw}`
+  )
   const file = path.join(os.tmpdir(), `debutube-${process.pid}-${Date.now()}.txt`)
-  const body = source.includes('# Netscape HTTP Cookie File') ? source : `# Netscape HTTP Cookie File\n${source}`
   fs.writeFileSync(file, body)
   return { options: { cookies: file }, cleanup: () => fs.rmSync(file, { force: true }) }
+}
+
+function isEnglishTrack(format: { language?: string | null; format_note?: string; format?: string }) {
+  const lang = (format.language || '').toLowerCase()
+  if (lang && !lang.startsWith('en')) return false
+  const note = `${format.format_note || ''} ${format.format || ''}`
+  if (/[\u0600-\u06FF]/.test(note)) return false
+  if (/\barabic\b/i.test(note)) return false
+  return true
 }
 
 function isStoryboard(format: RawFormat) {
@@ -151,7 +146,10 @@ function toListed(format: RawFormat): ListedFormat | null {
 async function info(url: string, cookies?: string) {
   const jar = withCookies(cookies)
   try {
-    return await ytdlp.getInfoAsync<'video'>(url, { ...jar.options, flatPlaylist: false })
+    return await ytdlp.getInfoAsync<'video'>(url, Object.assign(
+      { ...jar.options, flatPlaylist: false },
+      { forceIpv4: true, noCacheDir: true, extractorArgs: { youtube: ['lang=en'] } }
+    ))
   } finally {
     jar.cleanup()
   }
@@ -159,10 +157,11 @@ async function info(url: string, cookies?: string) {
 
 export async function listFormats(url: string, cookies?: string) {
   const video = await info(url, cookies)
-  const formats = ((video.formats || []) as RawFormat[])
+  const listed = ((video.formats || []) as RawFormat[])
     .map(toListed)
     .filter((format): format is ListedFormat => !!format)
-    .sort((a, b) => (b.quality || 0) - (a.quality || 0))
+  const english = listed.filter(isEnglishTrack)
+  const formats = (english.length ? english : listed).sort((a, b) => (b.quality || 0) - (a.quality || 0))
 
   const videoFormats = formats
     .filter((format) => format.type !== 'audio')
@@ -196,72 +195,69 @@ export async function listFormats(url: string, cookies?: string) {
   }
 }
 
-function ytdlpError(error: unknown) {
-  const raw =
-    error && typeof error === 'object' && 'stderr' in error
-      ? String((error as { stderr?: string }).stderr || '').trim()
-      : error instanceof Error
-        ? error.message
-        : 'yt-dlp failed'
-  if (/not a bot/i.test(raw)) return 'YouTube asked for sign-in'
-  const line = raw.split('\n').filter(Boolean).pop() || raw
-  return line.slice(0, 240)
-}
+export const PLAYBACK_CLIENTS = ['tv_embedded', 'web_safari', 'ios'] as const
 
-async function printMediaUrl(url: string, formatId: string, client: string, cookieFile?: string) {
-  const args = [
-    '--no-warnings',
-    '--no-playlist',
-    '--no-cache-dir',
-    '--js-runtimes',
-    `node:${process.execPath}`,
-    '-g',
-    '-f',
-    formatId,
-  ]
-  if (client) {
-    args.push('--extractor-args', `youtube:player_client=${client}`)
-  }
-  if (cookieFile) args.push('--cookies', cookieFile)
-  else args.push('--no-cookies')
-  args.push(url)
-
-  const { stdout } = await execFileAsync(bundledBinary(), args, {
-    windowsHide: true,
-    timeout: 50000,
-    maxBuffer: 2 * 1024 * 1024,
-  })
-  const link = stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.startsWith('https'))
-  if (!link) throw new Error(`Format ${formatId} is not available for this video`)
-  return link
-}
-
-export async function mediaSource(url: string, formatId: string, cookies?: string) {
-  // Use the same format entry the user clicked. TV player links swap in dubbed audio and a stream Chrome misreads.
-  const video = await info(url, cookies)
-  const match = ((video.formats || []) as RawFormat[]).find((format) => format.format_id === formatId && format.url)
-  if (match?.url) {
-    return { url: match.url, headers: match.http_headers || {} }
-  }
-
-  const jar = withCookies(cookies)
+export async function extractPlaybackUrl(url: string, formatId: string, client: string) {
+  // No cookies here. Cookie-backed links 403 after the first range, and a URL
+  // minted on one Vercel instance is rejected when another instance fetches it.
+  const jsRuntime = process.platform === 'win32' ? `node:${process.execPath}` : 'node'
+  let stdout = ''
   try {
-    const link = await printMediaUrl(url, formatId, '', jar.options.cookies)
-    return { url: link, headers: {} as Record<string, string> }
-  } catch (error) {
-    if (!jar.options.cookies) {
-      throw new Error('YouTube blocked the server. Turn on cookies — the same ones that loaded the formats — and try the download again.')
-    }
-    throw new Error(ytdlpError(error))
-  } finally {
-    jar.cleanup()
+    const result = await execFileAsync(
+      fs.existsSync(binary) ? binary : 'yt-dlp',
+      [
+        '--no-warnings',
+        '--no-config',
+        '--no-cache-dir',
+        '--no-playlist',
+        '--force-ipv4',
+        '--js-runtimes',
+        jsRuntime,
+        '-g',
+        '-f',
+        formatId,
+        '--extractor-args',
+        `youtube:player_client=${client};lang=en`,
+        url,
+      ],
+      {
+        windowsHide: true,
+        timeout: 20000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...process.env,
+          PATH: process.env.PATH,
+          PATHEXT: process.env.PATHEXT,
+          SystemRoot: process.env.SystemRoot,
+          HOME: process.platform === 'win32' ? process.env.USERPROFILE : '/tmp',
+          XDG_CACHE_HOME: process.platform === 'win32' ? undefined : '/tmp',
+        },
+      }
+    )
+    stdout = result.stdout
+  } catch (err) {
+    const failure = err as { stderr?: string; message?: string }
+    const detail = (failure.stderr || failure.message || 'extract failed').trim().slice(0, 300)
+    throw new Error(detail)
   }
+  const link = stdout.split(/\r?\n/).find((line) => line.startsWith('https'))
+  if (!link) throw new Error(`Format ${formatId} is not available for this video`)
+  return link.trim()
 }
 
 export async function directUrl(url: string, formatId: string, cookies?: string) {
-  const source = await mediaSource(url, formatId, cookies)
-  return source.url
+  const video = await info(url, cookies)
+  const match = ((video.formats || []) as RawFormat[]).find((format) => format.format_id === formatId)
+  if (!match) throw new Error(`Format ${formatId} is not available for this video`)
+
+  const failures: string[] = []
+  for (const client of PLAYBACK_CLIENTS) {
+    try {
+      return await extractPlaybackUrl(url, formatId, client)
+    } catch (err) {
+      failures.push(`${client}: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+  if (match.url) return match.url
+  throw new Error(failures.join(' | ').slice(0, 500) || `Format ${formatId} is not available for this video`)
 }
