@@ -195,12 +195,17 @@ export async function listFormats(url: string, cookies?: string) {
   }
 }
 
-export const PLAYBACK_CLIENTS = ['tv_embedded', 'web_safari', 'ios'] as const
+// 'cookies' is the last resort: datacenter IPs often get the bot check without them,
+// but cookie-backed links may 403 on later byte ranges.
+export const PLAYBACK_CLIENTS = ['tv_embedded', 'web_safari', 'ios', 'cookies'] as const
 
 export async function extractPlaybackUrl(url: string, formatId: string, client: string) {
-  // No cookies here. Cookie-backed links 403 after the first range, and a URL
-  // minted on one Vercel instance is rejected when another instance fetches it.
   const jsRuntime = process.platform === 'win32' ? `node:${process.execPath}` : 'node'
+  const jar = client === 'cookies' ? withCookies() : null
+  if (jar && !jar.options.cookies) throw new Error('no server cookies configured (YTDLP_COOKIES)')
+  const clientArgs = jar
+    ? ['--cookies', jar.options.cookies!, '--extractor-args', 'youtube:lang=en']
+    : ['--extractor-args', `youtube:player_client=${client};lang=en`]
   let stdout = ''
   try {
     const result = await execFileAsync(
@@ -216,8 +221,7 @@ export async function extractPlaybackUrl(url: string, formatId: string, client: 
         '-g',
         '-f',
         formatId,
-        '--extractor-args',
-        `youtube:player_client=${client};lang=en`,
+        ...clientArgs,
         url,
       ],
       {
@@ -239,6 +243,8 @@ export async function extractPlaybackUrl(url: string, formatId: string, client: 
     const failure = err as { stderr?: string; message?: string }
     const detail = (failure.stderr || failure.message || 'extract failed').trim().slice(0, 300)
     throw new Error(detail)
+  } finally {
+    jar?.cleanup()
   }
   const link = stdout.split(/\r?\n/).find((line) => line.startsWith('https'))
   if (!link) throw new Error(`Format ${formatId} is not available for this video`)
