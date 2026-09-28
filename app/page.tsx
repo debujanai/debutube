@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Download, AlertCircle, Loader2, Film, Music, FileVideo, FileAudio, Play, Moon, Sun, Eye, ThumbsUp, Clock, Calendar, User, RefreshCw } from 'lucide-react'
+import { Download, AlertCircle, Loader2, Film, Music, FileVideo, FileAudio, Play, Moon, Sun, Eye, ThumbsUp, Clock, Calendar, User, RefreshCw, Cookie, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface Format {
   format_id: string
@@ -9,6 +9,8 @@ interface Format {
   resolution?: string
   format_note?: string
   filesize?: number
+  filesize_approx?: number
+  height?: number
   vcodec?: string
   acodec?: string
   fps?: number
@@ -44,6 +46,18 @@ export default function Home() {
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [formatsTimestamp, setFormatsTimestamp] = useState<number | null>(null)
   const [isExpired, setIsExpired] = useState(false)
+  const [cookies, setCookies] = useState('')
+  const [showCookiePanel, setShowCookiePanel] = useState(false)
+  const [useCookies, setUseCookies] = useState(false)
+
+  const getRequestBody = (extra: Record<string, string> = {}) => {
+    const payload: Record<string, string> = { ...extra }
+    const trimmed = cookies.trim()
+    if (useCookies && trimmed) {
+      payload.cookies = trimmed
+    }
+    return payload
+  }
 
   // Load theme preference on mount
   useEffect(() => {
@@ -51,7 +65,25 @@ export default function Home() {
     if (savedTheme === 'dark') {
       setIsDarkMode(true)
     }
+    const savedCookies = sessionStorage.getItem('debutube-cookies')
+    if (savedCookies) {
+      setCookies(savedCookies)
+      setUseCookies(true)
+    }
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((reg) => reg.unregister())
+      })
+    }
   }, [])
+
+  useEffect(() => {
+    if (cookies.trim()) {
+      sessionStorage.setItem('debutube-cookies', cookies)
+    } else {
+      sessionStorage.removeItem('debutube-cookies')
+    }
+  }, [cookies])
 
   // Auto-expire formats after 2 minutes
   useEffect(() => {
@@ -91,7 +123,7 @@ export default function Home() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(getRequestBody({ url })),
       })
 
       const data = await response.json()
@@ -155,7 +187,7 @@ export default function Home() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url, formatId }),
+        body: JSON.stringify(getRequestBody({ url, formatId })),
       })
 
       const data = await response.json()
@@ -168,19 +200,13 @@ export default function Home() {
       const videoTitle = videoInfo?.title || await getVideoTitle(url)
       const cleanTitle = videoTitle.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').substring(0, 50)
       
-      // Create filename
       const filename = `${cleanTitle}_${resolution || formatId}.${ext}`
-      
-      // Use our proxy download API to bypass CORS
+
       const downloadUrl = `/api/download?url=${encodeURIComponent(data.directUrl)}&filename=${encodeURIComponent(filename)}`
-      
-      // Create download link using our proxy
       const link = document.createElement('a')
       link.href = downloadUrl
       link.download = filename
       link.style.display = 'none'
-      
-      // Add to DOM, click, and remove
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -205,6 +231,9 @@ export default function Home() {
       return 'video'
     }
   }
+
+  const getFormatBytes = (format: Format) =>
+    format.filesize || format.filesize_approx
 
   const formatFileSize = (bytes?: number) => {
     if (!bytes) return 'Size unknown'
@@ -253,18 +282,21 @@ export default function Home() {
     }
   }
 
-  // Filter and organize formats - ONLY SHOW FORMATS WITH FILE SIZE
-  const videoFormats = formats.filter(f => 
-    f.vcodec && f.vcodec !== 'none' && 
-    !f.format_note?.includes('storyboard') &&
-    f.resolution && f.resolution !== 'audio only' &&
-    f.filesize && f.filesize > 0 // Only show formats with file size
+  const isStoryboard = (f: Format) =>
+    f.format_note?.includes('storyboard') ||
+    f.format_id?.startsWith('sb') ||
+    f.ext?.toLowerCase() === 'mhtml'
+
+  const videoFormats = formats.filter(f =>
+    f.vcodec && f.vcodec !== 'none' &&
+    !isStoryboard(f) &&
+    f.resolution && f.resolution !== 'audio only'
   )
 
-  const audioFormats = formats.filter(f => 
-    f.acodec && f.acodec !== 'none' && 
-    (f.resolution === 'audio only' || !f.vcodec || f.vcodec === 'none') &&
-    f.filesize && f.filesize > 0 // Only show formats with file size
+  const audioFormats = formats.filter(f =>
+    f.acodec && f.acodec !== 'none' &&
+    !isStoryboard(f) &&
+    (f.resolution === 'audio only' || !f.vcodec || f.vcodec === 'none')
   )
 
   // Group video formats by extension and resolution
@@ -427,7 +459,7 @@ export default function Home() {
           {/* File Size - Most Important */}
           <div className="text-center">
             <div className="text-xs text-[#64748b] mb-1">Size</div>
-            <div className="font-bold text-lg" style={{ color: colors.text }}>{formatFileSize(format.filesize)}</div>
+            <div className="font-bold text-lg" style={{ color: colors.text }}>{formatFileSize(getFormatBytes(format))}</div>
           </div>
           
           {/* Secondary Info in Row */}
@@ -601,6 +633,61 @@ export default function Home() {
                 }}
                 onKeyPress={(e) => e.key === 'Enter' && handleGetFormats()}
               />
+            </div>
+
+            {/* Optional YouTube cookies */}
+            <div
+              className="mb-8 rounded-2xl border-2 overflow-hidden text-left"
+              style={{ borderColor: colors.cardBorder, backgroundColor: colors.cardBg }}
+            >
+              <button
+                type="button"
+                onClick={() => setShowCookiePanel(!showCookiePanel)}
+                className="w-full flex items-center justify-between gap-3 px-6 py-4 font-semibold transition-colors"
+                style={{ color: colors.text, fontFamily: 'Poppins, sans-serif' }}
+              >
+                <span className="flex items-center gap-2">
+                  <Cookie className="w-5 h-5" />
+                  YouTube cookies (optional)
+                </span>
+                {showCookiePanel ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              </button>
+              {showCookiePanel && (
+                <div className="px-6 pb-6 space-y-4" style={{ borderTop: `1px solid ${colors.cardBorder}` }}>
+                  <p className="text-sm pt-4" style={{ color: colors.textMuted, fontFamily: 'Inter, sans-serif' }}>
+                    If YouTube blocks the request or the video is age-restricted, paste cookies exported while logged in.
+                    Use a browser extension like &quot;Get cookies.txt LOCALLY&quot;, export for youtube.com, and paste the full file here.
+                    Cookies stay in this browser tab only (session storage).
+                  </p>
+                  <label className="flex items-center gap-3 cursor-pointer text-sm font-medium" style={{ color: colors.text }}>
+                    <input
+                      type="checkbox"
+                      checked={useCookies}
+                      onChange={(e) => setUseCookies(e.target.checked)}
+                      className="w-4 h-4 rounded"
+                    />
+                    Send these cookies with format and download requests
+                  </label>
+                  <textarea
+                    value={cookies}
+                    onChange={(e) => setCookies(e.target.value)}
+                    placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	..."
+                    rows={6}
+                    className="w-full px-4 py-3 border rounded-xl text-sm font-mono focus:outline-none resize-y min-h-[120px]"
+                    style={{
+                      backgroundColor: colors.inputBg,
+                      borderColor: colors.inputBorder,
+                      color: colors.text,
+                    }}
+                    spellCheck={false}
+                  />
+                  {useCookies && !cookies.trim() && (
+                    <p className="text-sm" style={{ color: colors.errorText }}>
+                      Enable cookies is on but the field is empty — paste your export or turn off the checkbox.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             <button

@@ -1,38 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { directUrl } from '@/lib/ytdlp'
+
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
   try {
-    // In development, proxy to Flask backend
-    if (process.env.NODE_ENV === 'development') {
-      const body = await request.text()
-      
-      const flaskResponse = await fetch('http://localhost:5000/api/direct-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: body
-      })
-      
-      const data = await flaskResponse.text()
-      
-      return new Response(data, {
-        status: flaskResponse.status,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        }
-      })
+    const body = await request.json()
+    const url = body?.url
+    const formatId = body?.formatId
+    if (!url || !formatId) {
+      return NextResponse.json({ error: 'URL and formatId are required' }, { status: 400 })
     }
-    
-    // In production, this should not be reached
-    return NextResponse.json({ error: 'Use Flask backend in production' }, { status: 500 })
-    
+    const link = await directUrl(url, String(formatId), typeof body.cookies === 'string' ? body.cookies : undefined)
+    return NextResponse.json({ directUrl: link }, { headers: { 'Access-Control-Allow-Origin': '*' } })
   } catch (error) {
-    console.error('Proxy error:', error)
-    return NextResponse.json({ 
-      error: 'Failed to connect to backend. Make sure Flask server is running on port 5000.' 
-    }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Failed to get direct URL'
+    console.error('direct-url error:', message)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -43,6 +28,6 @@ export async function OPTIONS() {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
-    }
+    },
   })
-} 
+}

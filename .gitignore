@@ -33,4 +33,13 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts 
+next-env.d.ts
+
+# local secrets & cookies (users add their own on Vercel env / locally)
+youtube_cookies.txt
+
+# desktop app (local Electron build; not deployed to Vercel)
+/desktop/
+
+# optional local lockfiles
+bun.lock
