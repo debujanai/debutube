@@ -202,9 +202,11 @@ export default function Home() {
       
       const filename = `${cleanTitle}_${resolution || formatId}.${ext}`
 
-      const downloadUrl = `/api/download?url=${encodeURIComponent(data.directUrl)}&filename=${encodeURIComponent(filename)}`
+      // Vercel’s datacenter IP is rejected by googlevideo (403). The browser downloads straight from YouTube.
       const link = document.createElement('a')
-      link.href = downloadUrl
+      link.href = data.directUrl
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
       link.download = filename
       link.style.display = 'none'
       document.body.appendChild(link)

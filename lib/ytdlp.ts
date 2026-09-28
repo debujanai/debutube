@@ -163,38 +163,57 @@ export async function listFormats(url: string, cookies?: string) {
   }
 }
 
-async function unthrottledUrl(url: string, formatId: string) {
-  // Cookie-backed links die after the first few megabytes (403). The TV player link allows the whole file.
+function ytdlpError(error: unknown) {
+  if (error && typeof error === 'object' && 'stderr' in error) {
+    const stderr = String((error as { stderr?: string }).stderr || '').trim()
+    if (stderr) return stderr.split('\n').slice(-4).join(' ').slice(0, 500)
+  }
+  return error instanceof Error ? error.message : 'yt-dlp failed'
+}
+
+async function printMediaUrl(url: string, formatId: string, client: string) {
+  // No cookies. Cookie-backed web links are IP-locked and return 403 on download.
   const { stdout } = await execFileAsync(
     fs.existsSync(binary) ? binary : 'yt-dlp',
     [
       '--no-warnings',
       '--no-playlist',
+      '--no-cache-dir',
+      '--no-cookies',
       '--js-runtimes',
       `node:${process.execPath}`,
       '-g',
       '-f',
       formatId,
       '--extractor-args',
-      'youtube:player_client=tv_embedded',
+      `youtube:player_client=${client}`,
       url,
     ],
-    { windowsHide: true, timeout: 60000, maxBuffer: 1024 * 1024 }
+    { windowsHide: true, timeout: 50000, maxBuffer: 2 * 1024 * 1024 }
   )
-  const link = stdout.split(/\r?\n/).find((line) => line.startsWith('https'))
+  const link = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('https'))
   if (!link) throw new Error(`Format ${formatId} is not available for this video`)
-  return link.trim()
+  return link
 }
 
-export async function directUrl(url: string, formatId: string, cookies?: string) {
-  const video = await info(url, cookies)
-  const match = ((video.formats || []) as RawFormat[]).find((format) => format.format_id === formatId)
-  if (!match) throw new Error(`Format ${formatId} is not available for this video`)
-
-  try {
-    return await unthrottledUrl(url, formatId)
-  } catch {
-    if (match.url) return match.url
-    throw new Error(`Format ${formatId} is not available for this video`)
+export async function directUrl(url: string, formatId: string, _cookies?: string) {
+  const clients = ['tv_embedded', 'tv', 'ios']
+  const errors: string[] = []
+  for (const client of clients) {
+    try {
+      const link = await printMediaUrl(url, formatId, client)
+      const player = new URL(link).searchParams.get('c') || ''
+      if (player.startsWith('WEB')) {
+        errors.push(`${client}: refused web player link`)
+        continue
+      }
+      return link
+    } catch (error) {
+      errors.push(`${client}: ${ytdlpError(error)}`)
+    }
   }
+  throw new Error(errors.join(' | ') || `Format ${formatId} is not available for this video`)
 }
