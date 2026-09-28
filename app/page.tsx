@@ -182,36 +182,31 @@ export default function Home() {
     setDownloadingFormats(prev => new Set(prev).add(formatId))
     
     try {
-      const response = await fetch('/api/direct-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(getRequestBody({ url, formatId })),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to get direct URL')
-      }
-
-      // Get video title for better filename
       const videoTitle = videoInfo?.title || await getVideoTitle(url)
       const cleanTitle = videoTitle.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_').substring(0, 50)
-      
       const filename = `${cleanTitle}_${resolution || formatId}.${ext}`
 
-      // Vercel’s datacenter IP is rejected by googlevideo (403). The browser downloads straight from YouTube.
+      const fileResponse = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(getRequestBody({ url, formatId, filename })),
+      })
+
+      if (!fileResponse.ok) {
+        const failure = await fileResponse.json().catch(() => ({}))
+        throw new Error(failure.error || 'Failed to download')
+      }
+
+      const blob = await fileResponse.blob()
+      const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      link.href = data.directUrl
-      link.target = '_blank'
-      link.rel = 'noopener noreferrer'
+      link.href = objectUrl
       link.download = filename
       link.style.display = 'none'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000)
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to download')
@@ -477,6 +472,12 @@ export default function Home() {
               <div className="text-center">
                 <div className="text-[#64748b]">Codec</div>
                 <div className="font-semibold text-xs" style={{ color: colors.text }}>{format.vcodec.split('.')[0]}</div>
+              </div>
+            )}
+            {format.format_note && (
+              <div className="text-center">
+                <div className="text-[#64748b]">Track</div>
+                <div className="font-semibold text-xs" style={{ color: colors.text }}>{format.format_note}</div>
               </div>
             )}
           </div>

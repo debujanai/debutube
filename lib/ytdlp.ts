@@ -60,6 +60,9 @@ type RawFormat = {
   protocol?: string
   format?: string
   url?: string
+  language?: string
+  language_preference?: number
+  http_headers?: Record<string, string>
 }
 
 export type ListedFormat = {
@@ -81,6 +84,7 @@ export type ListedFormat = {
   protocol?: string
   format?: string
   url?: string
+  language?: string
   type: 'video' | 'audio' | 'combined'
 }
 
@@ -139,6 +143,7 @@ function toListed(format: RawFormat): ListedFormat | null {
     protocol: format.protocol,
     format: format.format,
     url: format.url,
+    language: format.language,
     type: hasVideo && !hasAudio ? 'video' : hasAudio && !hasVideo ? 'audio' : 'combined',
   }
 }
@@ -234,32 +239,29 @@ async function printMediaUrl(url: string, formatId: string, client: string, cook
   return link
 }
 
-export async function directUrl(url: string, formatId: string, cookies?: string) {
+export async function mediaSource(url: string, formatId: string, cookies?: string) {
+  // Use the same format entry the user clicked. TV player links swap in dubbed audio and a stream Chrome misreads.
+  const video = await info(url, cookies)
+  const match = ((video.formats || []) as RawFormat[]).find((format) => format.format_id === formatId && format.url)
+  if (match?.url) {
+    return { url: match.url, headers: match.http_headers || {} }
+  }
+
   const jar = withCookies(cookies)
-  const clients = ['tv_embedded', 'tv', 'ios', '']
-  const errors: string[] = []
-  let webFallback = ''
   try {
-    for (const client of clients) {
-      const label = client || 'default'
-      try {
-        const link = await printMediaUrl(url, formatId, client, jar.options.cookies)
-        const player = new URL(link).searchParams.get('c') || ''
-        if (player.startsWith('WEB')) {
-          webFallback = webFallback || link
-          continue
-        }
-        return link
-      } catch (error) {
-        errors.push(`${label}: ${ytdlpError(error)}`)
-      }
-    }
-    if (webFallback) return webFallback
+    const link = await printMediaUrl(url, formatId, '', jar.options.cookies)
+    return { url: link, headers: {} as Record<string, string> }
+  } catch (error) {
     if (!jar.options.cookies) {
       throw new Error('YouTube blocked the server. Turn on cookies — the same ones that loaded the formats — and try the download again.')
     }
-    throw new Error(errors.join(' | ') || `Format ${formatId} is not available for this video`)
+    throw new Error(ytdlpError(error))
   } finally {
     jar.cleanup()
   }
+}
+
+export async function directUrl(url: string, formatId: string, cookies?: string) {
+  const source = await mediaSource(url, formatId, cookies)
+  return source.url
 }
