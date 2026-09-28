@@ -200,6 +200,17 @@ export default function Home() {
         frame.style.display = 'none'
         document.body.appendChild(frame)
       }
+      // Successful downloads never fire load; an error response renders JSON into the frame.
+      const target = frame
+      target.onload = () => {
+        const text = target.contentDocument?.body?.innerText?.trim()
+        if (!text) return
+        try {
+          setError(JSON.parse(text).error || text)
+        } catch {
+          setError(text.slice(0, 500))
+        }
+      }
       form.target = 'download-frame'
       const fields = getRequestBody({ watch: url, format: formatId, filename })
       for (const [name, value] of Object.entries(fields)) {

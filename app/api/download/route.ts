@@ -93,14 +93,21 @@ async function openPlayable(watch: string, formatId: string, cookies?: string) {
       link = await extractPlaybackUrl(watch, formatId, client, cookies)
       const knownTotal = Number(new URL(link).searchParams.get('clen')) || 0
       const end = knownTotal ? Math.min(CHUNK_SIZE - 1, knownTotal - 1) : CHUNK_SIZE - 1
+      if (knownTotal > CHUNK_SIZE) {
+        // Some links serve the first chunk and then 403; reject them before streaming starts.
+        const probe = await fetchChunk(link, CHUNK_SIZE, Math.min(CHUNK_SIZE + 1023, knownTotal - 1))
+        await probe.body.cancel()
+      }
       const first = await fetchChunk(link, 0, end)
       console.log(`playback client ${client}`)
       return { link, knownTotal, first }
     } catch (err) {
-      failures.push(`${client}: ${err instanceof Error ? err.message : err}`)
+      const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ')
+      console.error(`playback client ${client} failed: ${message}`)
+      failures.push(`${client}: ${message.slice(0, 140)}`)
     }
   }
-  throw new Error(failures.join(' | ').slice(0, 700))
+  throw new Error(failures.join(' | '))
 }
 
 export async function GET(request: NextRequest) {

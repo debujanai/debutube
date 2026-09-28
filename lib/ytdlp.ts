@@ -203,15 +203,27 @@ export async function listFormats(url: string, cookies?: string) {
 
 // 'cookies' is the last resort: datacenter IPs often get the bot check without them,
 // but cookie-backed links may 403 on later byte ranges.
-export const PLAYBACK_CLIENTS = ['tv_embedded', 'web_safari', 'ios', 'cookies'] as const
+// Datacenter IPs always hit the bot check without cookies, so the cookie-backed client goes first.
+export const PLAYBACK_CLIENTS = [
+  'cookies:default',
+  'tv_embedded',
+  'web_safari',
+  'ios',
+] as const
 
 export async function extractPlaybackUrl(url: string, formatId: string, client: string, cookies?: string) {
   const jsRuntime = process.platform === 'win32' ? `node:${process.execPath}` : 'node'
-  const jar = client === 'cookies' ? withCookies(cookies) : null
+  const useJar = client.startsWith('cookies:')
+  const playerClient = useJar ? client.slice('cookies:'.length) : client
+  const jar = useJar ? withCookies(cookies) : null
   if (jar && !jar.options.cookies) throw new Error('no cookies provided')
-  const clientArgs = jar
-    ? ['--cookies', jar.options.cookies!, '--extractor-args', 'youtube:lang=en']
-    : ['--extractor-args', `youtube:player_client=${client};lang=en`]
+  const extractorArgs =
+    playerClient === 'default' ? 'youtube:lang=en' : `youtube:player_client=${playerClient};lang=en`
+  const clientArgs = [
+    ...(jar ? ['--cookies', jar.options.cookies!] : []),
+    '--extractor-args',
+    extractorArgs,
+  ]
   let stdout = ''
   try {
     const result = await execFileAsync(
