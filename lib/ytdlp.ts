@@ -192,33 +192,40 @@ export async function listFormats(url: string, cookies?: string) {
 }
 
 function ytdlpError(error: unknown) {
-  if (error && typeof error === 'object' && 'stderr' in error) {
-    const stderr = String((error as { stderr?: string }).stderr || '').trim()
-    if (stderr) return stderr.split('\n').slice(-4).join(' ').slice(0, 500)
-  }
-  return error instanceof Error ? error.message : 'yt-dlp failed'
+  const raw =
+    error && typeof error === 'object' && 'stderr' in error
+      ? String((error as { stderr?: string }).stderr || '').trim()
+      : error instanceof Error
+        ? error.message
+        : 'yt-dlp failed'
+  if (/not a bot/i.test(raw)) return 'YouTube asked for sign-in'
+  const line = raw.split('\n').filter(Boolean).pop() || raw
+  return line.slice(0, 240)
 }
 
-async function printMediaUrl(url: string, formatId: string, client: string) {
-  // No cookies. Cookie-backed web links are IP-locked and return 403 on download.
-  const { stdout } = await execFileAsync(
-    bundledBinary(),
-    [
-      '--no-warnings',
-      '--no-playlist',
-      '--no-cache-dir',
-      '--no-cookies',
-      '--js-runtimes',
-      `node:${process.execPath}`,
-      '-g',
-      '-f',
-      formatId,
-      '--extractor-args',
-      `youtube:player_client=${client}`,
-      url,
-    ],
-    { windowsHide: true, timeout: 50000, maxBuffer: 2 * 1024 * 1024 }
-  )
+async function printMediaUrl(url: string, formatId: string, client: string, cookieFile?: string) {
+  const args = [
+    '--no-warnings',
+    '--no-playlist',
+    '--no-cache-dir',
+    '--js-runtimes',
+    `node:${process.execPath}`,
+    '-g',
+    '-f',
+    formatId,
+  ]
+  if (client) {
+    args.push('--extractor-args', `youtube:player_client=${client}`)
+  }
+  if (cookieFile) args.push('--cookies', cookieFile)
+  else args.push('--no-cookies')
+  args.push(url)
+
+  const { stdout } = await execFileAsync(bundledBinary(), args, {
+    windowsHide: true,
+    timeout: 50000,
+    maxBuffer: 2 * 1024 * 1024,
+  })
   const link = stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -227,21 +234,32 @@ async function printMediaUrl(url: string, formatId: string, client: string) {
   return link
 }
 
-export async function directUrl(url: string, formatId: string, _cookies?: string) {
-  const clients = ['tv_embedded', 'tv', 'ios']
+export async function directUrl(url: string, formatId: string, cookies?: string) {
+  const jar = withCookies(cookies)
+  const clients = ['tv_embedded', 'tv', 'ios', '']
   const errors: string[] = []
-  for (const client of clients) {
-    try {
-      const link = await printMediaUrl(url, formatId, client)
-      const player = new URL(link).searchParams.get('c') || ''
-      if (player.startsWith('WEB')) {
-        errors.push(`${client}: refused web player link`)
-        continue
+  let webFallback = ''
+  try {
+    for (const client of clients) {
+      const label = client || 'default'
+      try {
+        const link = await printMediaUrl(url, formatId, client, jar.options.cookies)
+        const player = new URL(link).searchParams.get('c') || ''
+        if (player.startsWith('WEB')) {
+          webFallback = webFallback || link
+          continue
+        }
+        return link
+      } catch (error) {
+        errors.push(`${label}: ${ytdlpError(error)}`)
       }
-      return link
-    } catch (error) {
-      errors.push(`${client}: ${ytdlpError(error)}`)
     }
+    if (webFallback) return webFallback
+    if (!jar.options.cookies) {
+      throw new Error('YouTube blocked the server. Turn on cookies — the same ones that loaded the formats — and try the download again.')
+    }
+    throw new Error(errors.join(' | ') || `Format ${formatId} is not available for this video`)
+  } finally {
+    jar.cleanup()
   }
-  throw new Error(errors.join(' | ') || `Format ${formatId} is not available for this video`)
 }
