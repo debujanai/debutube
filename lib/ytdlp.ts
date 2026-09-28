@@ -7,11 +7,39 @@ import path from 'path'
 
 const execFileAsync = promisify(execFile)
 
-const binary = path.join(process.cwd(), 'node_modules', 'ytdlp-nodejs', 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')
+function bundledBinary() {
+  // ytdlp-nodejs saves the GitHub asset name, not "yt-dlp". On Vercel that file is yt-dlp_linux.
+  const dirs = [path.join(process.cwd(), 'node_modules', 'ytdlp-nodejs', 'bin')]
+  try {
+    dirs.unshift(path.resolve(path.dirname(require.resolve('ytdlp-nodejs')), '..', 'bin'))
+  } catch {
+    // package resolution failed; keep the cwd path
+  }
+  const names =
+    process.platform === 'win32'
+      ? ['yt-dlp.exe']
+      : process.platform === 'darwin'
+        ? ['yt-dlp_macos', 'yt-dlp']
+        : ['yt-dlp_linux', 'yt-dlp_musllinux', 'yt-dlp_linux_aarch64', 'yt-dlp']
+  const found = dirs
+    .flatMap((binDir) => names.map((name) => path.join(binDir, name)))
+    .find((candidate) => fs.existsSync(candidate))
+  if (!found) {
+    throw new Error(`yt-dlp binary is missing. Looked in ${dirs.join(', ')}`)
+  }
+  if (process.platform === 'win32') return found
+  try {
+    fs.accessSync(found, fs.constants.X_OK)
+    return found
+  } catch {
+    const dest = path.join(os.tmpdir(), path.basename(found))
+    if (!fs.existsSync(dest)) fs.copyFileSync(found, dest)
+    fs.chmodSync(dest, 0o755)
+    return dest
+  }
+}
 
-const ytdlp = new YtDlp({
-  binaryPath: fs.existsSync(binary) ? binary : undefined,
-})
+const ytdlp = new YtDlp()
 
 type RawFormat = {
   format_id?: string
@@ -174,7 +202,7 @@ function ytdlpError(error: unknown) {
 async function printMediaUrl(url: string, formatId: string, client: string) {
   // No cookies. Cookie-backed web links are IP-locked and return 403 on download.
   const { stdout } = await execFileAsync(
-    fs.existsSync(binary) ? binary : 'yt-dlp',
+    bundledBinary(),
     [
       '--no-warnings',
       '--no-playlist',
